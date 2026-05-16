@@ -1,0 +1,5 @@
+{
+  "enabled": true,
+  "max_summary_chars": 2000,
+  "debug_log_path": "/tmp/pc-smoke.log"
+}
