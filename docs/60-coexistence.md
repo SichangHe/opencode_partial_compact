@@ -6,9 +6,10 @@ DCP rewrites the message array in the same hook and injects its own
 `<dcp-message-id>` tags with disjoint semantics from ours. Running both
 would produce two ID systems the agent could confuse.
 
-At `server()` invocation we read `ctx.config.plugin` (or whatever the
-plugin SDK exposes as the resolved plugin list). If
-`@tarquinen/opencode-dcp` is present, we throw with:
+On first chat/native-compaction hook use we read the resolved plugin list through the Opencode
+client. The check is not run inside `server()` because the Opencode HTTP server
+is not ready during plugin bootstrap. If `@tarquinen/opencode-dcp` is present,
+we throw with:
 
 ```text
 opencode-partial-compact: refusing to load — @tarquinen/opencode-dcp is
@@ -30,10 +31,9 @@ Both consume `experimental.chat.messages.transform`. Our hook MUST run
   `teamMailboxInjector`, `ensureUserTurnAfterAssistantTail`) run AFTER
   ours, so we never compact content they just added.
 
-At `server()` invocation we compare our index vs. oh-my-openagent's
-index in the resolved plugin list. If ours is later, **error and
-refuse to load** (not just warn — warnings get filtered in startup
-spam):
+On first chat/native-compaction hook use we compare our index vs. oh-my-openagent's index in the
+resolved plugin list. If ours is later, **error and refuse to operate** (not
+just warn — warnings get filtered in startup spam):
 
 ```text
 opencode-partial-compact: refusing to load — list this plugin BEFORE
@@ -46,12 +46,12 @@ If oh-my-openagent isn't present, no check.
 
 ## Tool name collisions
 
-Avoided. Our only tool: `pc_compact`. Reserved by oh-my-openagent
+Avoided. Our only tool: `partial_compact`. Reserved by oh-my-openagent
 (per discovery report): `grep`, `glob`, `skill`, `task`, `edit`,
 `look_at`, `lsp_*`, `ast_grep_*`, `session_*`, `background_*`,
 `team_*`, `task_*`, `interactive_bash`, `skill_mcp`, `call_omo_agent`.
 Reserved by Opencode built-ins: read, edit, write, bash, etc. No
-collision with `pc_compact`.
+collision with `partial_compact`.
 
 ## Reserved identifiers
 
@@ -74,17 +74,17 @@ Our synthetic compaction parts carry:
 ```
 
 Other well-behaved plugins should not re-compact or re-process parts
-with `source` set by a different plugin. We follow this rule
-ourselves: range validation rejects any range containing a
-foreign-`source` synthetic part.
+with `source` set by a different plugin. We follow this rule for our
+own marker: range validation rejects any range containing a prior
+`source: "opencode-partial-compact"` part.
 
 ## With Opencode's own `/compact`
 
-These coexist fine. If `/compact` runs and discards messages our
-records reference, our hook silently skips those records (the
-`from_message_id` no longer resolves in the loaded message array). No
-user-visible breakage; debug log records the skip. Future v0.1 may
-expose a slash-command status to inform the user.
+These coexist fine. If `/compact` runs and discards messages our records
+reference, our hook skips those records in the transformed view. When a native
+`compaction` part is present, the plugin fetches the full session message list
+and prunes a sidecar record only after both endpoints are confirmed absent.
+Future v0.1 may expose a slash-command status to inform the user.
 
 ## With sub-agents (oh-my-openagent's `call_omo_agent`)
 

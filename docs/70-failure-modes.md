@@ -1,8 +1,8 @@
 # Failure Modes (v0)
 
 Only the v0-relevant ones. Older F-codes dropped along with the
-features that produced them (pc_peek, pc_restore, pc_list, dual-ID,
-sidecar — see [`02-critique-findings.md`](02-critique-findings.md)).
+features that produced them (`pc_peek`, `pc_restore`, `pc_list`,
+dual-ID support). See [`02-critique-findings.md`](02-critique-findings.md).
 
 ## F1. Tool-pair split (v0: reject)
 
@@ -10,7 +10,7 @@ Compaction range puts a `tool_use` part in the last included message
 without its `tool_result` (in the immediately following message), or
 vice versa across the start boundary.
 
-**v0 handling.** `pc_compact` validates and returns an error:
+**v0 handling.** `partial_compact` validates and returns an error:
 `"range splits a tool_use/tool_result pair at msg... — extend the range
 to msg... or trim to msg..."`. The agent retries with corrected
 bounds. Auto-expansion is rejected because it can silently swallow
@@ -21,7 +21,7 @@ and repairs orphans if our validation ever misses one (e.g., bug).
 
 ## F2. Overlapping compactions
 
-Agent calls `pc_compact` over a range that overlaps an active record.
+Agent calls `partial_compact` over a range that overlaps an active record.
 
 **v0 handling.** Reject with `"range overlaps existing compaction
 starting at msg..."`. No restore in v0 — agent works around with a
@@ -48,10 +48,7 @@ the default. Hard precondition for any logic change to `hook.ts`.
 
 ## F5. Sidecar corruption / version skew
 
-(Only applies if the spike concludes we use the JSON sidecar; if we
-piggyback on `CompactionPart`, this disappears.)
-
-**v0 handling (sidecar branch).** Parse failure → log loud warning,
+**v0 handling.** Parse failure → log loud warning,
 rename bad file to `{sessionId}.json.bad-{epoch}`, treat in-memory
 state as empty for that session. Version skew → refuse to operate on
 that sidecar with a clear error.
@@ -71,34 +68,39 @@ Agent compacts everything except the current turn.
 **v0 handling.** Allowed. The remaining synthetic marker is still
 valid context.
 
-## F8. Reference to a message ID Opencode's `/compact` already discarded
+## F8. Reference to a message ID Opencode's native compaction already discarded
 
 Sidecar still has the record; the message no longer resolves in the
 loaded array.
 
-**v0 handling.** Hook silently skips the record. Debug log notes it.
-Record stays in sidecar (cheap, harmless). v0.1 may surface a status.
+**v0 handling.** Hook skips the record during view rewrite. If a native
+`compaction` part is present, the plugin fetches the full session
+message list and prunes the sidecar record only when both range
+endpoints are absent from that full list. If the full-session check
+fails, pruning is skipped and chat continues.
+
+This avoids deleting valid records when the transform input is only a
+partial view.
 
 ## F9. Plugin ordering wrong (oh-my-openagent before us)
 
-**v0 handling.** Refuse to load at `server()` init with a clear error
+**v0 handling.** Refuse to operate on first chat/native-compaction hook use with a clear error
 naming the required order. See `60-coexistence.md`.
 
 ## F10. DCP also configured
 
-**v0 handling.** Refuse to load at `server()` init. See
+**v0 handling.** Refuse to operate on first chat/native-compaction hook use. See
 `60-coexistence.md`.
 
 ## F11. SDK version skew
 
-POC built against `@opencode-ai/plugin` 1.15.0, Opencode 1.14.46
-ships 1.3.17. POC ran clean — the surface we use (`PluginModule`,
-`tool()`, the hook signature) is unchanged between those versions.
+POC ran against Opencode 1.14.46. The packaged plugin targets
+`@opencode-ai/plugin` and `@opencode-ai/sdk` `>=1.15.0`, which provide the TUI
+plugin types and `experimental.session.compacting` hook used by this checkout.
 
-**v0 handling.** Pin `peerDependencies: ">=1.3.17"` (lower bound from
-empirically-validated Opencode). Track Opencode releases manually
-until a CI hookup. Document the empirically-validated Opencode
-version in README.
+**v0 handling.** Pin `peerDependencies: ">=1.15.0"`. Track Opencode releases
+manually until a CI hookup. Document the empirically-validated Opencode version
+in README.
 
 ## F12. Summary too long
 
