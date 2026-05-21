@@ -8,7 +8,7 @@ was decided.
 | ID | Question | Resolution |
 |---|---|---|
 | OQ-1 | Granularity: message vs part vs both | **Message-only** for v0. Drop part-level + dual support per Opus critique O3. |
-| OQ-2 | Who writes the summary | **Agent inline**, as arg to `pc_compact`. |
+| OQ-2 | Who writes the summary | **Agent inline**, as arg to `partial_compact`. |
 | OQ-3 | Recovery API (peek + restore) | **Drop both.** Peek as designed defeats compaction (critique C1); restore is a guaranteed cache miss without payoff (O1). v0.1 may revisit. |
 | OQ-4 | Cache strategy (unrestricted vs gated) | **Unrestricted with tool-description nudge.** Honest break-even table in `40-kv-cache-strategy.md`; no enforcement. |
 | OQ-5 | Plugin-pure vs fork | **Plugin-pure.** Empirically validated. |

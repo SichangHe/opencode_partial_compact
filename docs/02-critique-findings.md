@@ -2,9 +2,8 @@
 
 Independent skeptical review of the first-draft design. Items below are
 load-bearing and must be reflected in the next revision of the docs and
-in the implementation. Source critique preserved in
-`/tmp/claude-30033/.../tasks/ac99028f6108171d1.output` (subagent
-transcript).
+in the implementation. This file preserves the durable conclusions;
+ephemeral subagent transcript paths are intentionally omitted.
 
 ## P0 — Will break or won't work
 
@@ -90,7 +89,7 @@ But the partner's message may also contain assistant text not in the
 original range — we silently compact reasoning the agent wanted to
 keep.
 
-**Fix.** Default `pc_compact` to **reject** ranges that split a tool
+**Fix.** Default `partial_compact` to **reject** ranges that split a tool
 pair. Make `auto_expand: true` an explicit opt-in arg.
 
 ## P1 — Will work but are over-engineered
@@ -144,7 +143,7 @@ alone.
 ### L2. Don't trust the agent to do the cache math without help
 
 Either gate by age relative to breakpoint, or annotate the
-`pc_compact` result with a break-even estimate, or both.
+`partial_compact` result with a break-even estimate, or both.
 
 ## Missing design questions (OQ-11..OQ-16)
 
@@ -154,7 +153,7 @@ Either gate by age relative to breakpoint, or annotate the
   pre-compact part IDs. Need user-visible status, not silent skip.
 - **OQ-13.** Sub-agent interaction (`call_omo_agent`). Does the
   parent see anything? Disjoint sessions?
-- **OQ-14.** Streaming/interrupted turn: `pc_compact` mid-stream,
+- **OQ-14.** Streaming/interrupted turn: `partial_compact` mid-stream,
   session aborts before persistence. Sidecar (or new equivalent) and
   SQLite disagree.
 - **OQ-15.** Does the model copy `prt...` IDs into file edits or
@@ -164,7 +163,7 @@ Either gate by age relative to breakpoint, or annotate the
 
 ## Trivial-alternative recommendation from critique
 
-> `pc_compact(message_id, summary)` only — message-level, no peek, no
+> `partial_compact(message_id, summary)` only — message-level, no peek, no
 > restore, no list, no tags. 200 LoC instead of 1500. 80% of the token
 > savings, none of F1/F3/F11/peek-roundtrip failure modes.
 
