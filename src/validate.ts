@@ -1,8 +1,12 @@
-import type { Part } from "@opencode-ai/sdk"
+export type RangePart = {
+  type: string
+  source?: unknown
+  state?: { status?: string }
+}
 
 export type WithParts = {
   info: { id: string; sessionID: string }
-  parts: Part[]
+  parts: RangePart[]
 }
 
 export type CompactionRecord = {
@@ -25,7 +29,7 @@ export type ValidationError =
  */
 function hasIncompleteToolUse(msg: WithParts): boolean {
   return msg.parts.some(
-    p => p.type === "tool" && ((p as { state?: { status?: string } }).state?.status === "pending" || (p as { state?: { status?: string } }).state?.status === "running"),
+    p => p.type === "tool" && (p.state?.status === "pending" || p.state?.status === "running"),
   )
 }
 
@@ -35,7 +39,7 @@ function hasIncompleteToolUse(msg: WithParts): boolean {
  */
 function hasToolResult(msg: WithParts): boolean {
   return msg.parts.some(
-    p => p.type === "tool" && ((p as { state?: { status?: string } }).state?.status === "completed" || (p as { state?: { status?: string } }).state?.status === "error"),
+    p => p.type === "tool" && (p.state?.status === "completed" || p.state?.status === "error"),
   )
 }
 
@@ -85,7 +89,7 @@ export function validateRange(
     for (const part of msg.parts) {
       if (
         part.type === "text" &&
-        (part as { source?: string }).source === "opencode-partial-compact"
+        part.source === "opencode-partial-compact"
       ) {
         return { kind: "prior_compaction" }
       }
