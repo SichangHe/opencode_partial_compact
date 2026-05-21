@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 import { join } from "node:path"
 import { mkdtemp, rm, readFile, writeFile, mkdir, readdir } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { loadState, addCompaction, _clearCache, _setStorageDir } from "../src/state"
+import { loadState, loadStateFresh, addCompaction, replaceCompactions, _clearCache, _setStorageDir } from "../src/state"
 
 let tempDir: string
 let storageRoot: string
@@ -45,6 +45,32 @@ describe("state round-trip", () => {
     expect(state.compactions[0]?.summary).toBe("Test summary")
   })
 
+  it("loadStateFresh refreshes a cached sidecar from disk", async () => {
+    const sid = "ses01FRESH01"
+    const cached = await loadState(sid)
+    expect(cached.compactions).toHaveLength(0)
+
+    await mkdir(storageRoot, { recursive: true })
+    await writeFile(
+      join(storageRoot, `${sid}.json`),
+      JSON.stringify({
+        schema_version: 1,
+        session_id: sid,
+        compactions: [{
+          from_message_id: "msg01A",
+          to_message_id: "msg01B",
+          summary: "fresh",
+          created_at_iso: "",
+        }],
+        last_written_iso: "",
+      }),
+      "utf8",
+    )
+
+    expect((await loadState(sid)).compactions).toHaveLength(0)
+    expect((await loadStateFresh(sid)).compactions[0]?.summary).toBe("fresh")
+  })
+
   it("multiple compactions are sorted by from_message_id", async () => {
     const sid = "ses01SORT01"
     // Insert in reverse order
@@ -65,6 +91,28 @@ describe("state round-trip", () => {
     const state = await loadState(sid)
     expect(state.compactions[0]?.from_message_id).toBe("msg01AAA")
     expect(state.compactions[1]?.from_message_id).toBe("msg01CCC")
+  })
+
+  it("replaceCompactions persists a pruned sorted record set", async () => {
+    const sid = "ses01REPLACE01"
+    await addCompaction(sid, {
+      from_message_id: "msg01CCC",
+      to_message_id: "msg01DDD",
+      summary: "remove me",
+      created_at_iso: "",
+    })
+    await replaceCompactions(sid, [{
+      from_message_id: "msg01AAA",
+      to_message_id: "msg01BBB",
+      summary: "keep me",
+      created_at_iso: "",
+    }])
+
+    _clearCache()
+    const state = await loadState(sid)
+    expect(state.compactions).toHaveLength(1)
+    expect(state.compactions[0]?.from_message_id).toBe("msg01AAA")
+    expect(state.compactions[0]?.summary).toBe("keep me")
   })
 
   it("atomic write: tmp file is cleaned up on success", async () => {

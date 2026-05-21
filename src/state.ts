@@ -66,8 +66,8 @@ export async function loadState(sessionID: string): Promise<SessionState> {
       const epoch = Date.now()
       try {
         await rename(filePath, `${filePath}.bad-${epoch}`)
-      } catch {
-        // best-effort
+      } catch (backupErr) {
+        debugLog(`Failed to back up corrupt sidecar for ${sessionID}: ${String(backupErr)}`)
       }
       state = emptyState(sessionID)
     }
@@ -77,13 +77,25 @@ export async function loadState(sessionID: string): Promise<SessionState> {
   return state
 }
 
+/** Load state from disk, replacing any cached copy for this process. */
+export async function loadStateFresh(sessionID: string): Promise<SessionState> {
+  cache.delete(sessionID)
+  return loadState(sessionID)
+}
+
 /** Append a compaction record and write through to disk atomically. */
 export async function addCompaction(sessionID: string, record: CompactionRecord): Promise<void> {
   const state = await loadState(sessionID)
   state.compactions.push(record)
-  state.compactions.sort((a, b) =>
-    a.from_message_id < b.from_message_id ? -1 : a.from_message_id > b.from_message_id ? 1 : 0,
-  )
+  state.compactions = sortedCompactions(state.compactions)
+  state.last_written_iso = new Date().toISOString()
+  await persist(state)
+}
+
+/** Replace compaction records and write through to disk atomically. */
+export async function replaceCompactions(sessionID: string, records: CompactionRecord[]): Promise<void> {
+  const state = await loadState(sessionID)
+  state.compactions = sortedCompactions(records)
   state.last_written_iso = new Date().toISOString()
   await persist(state)
 }
@@ -113,6 +125,12 @@ function emptyState(sessionID: string): SessionState {
     compactions: [],
     last_written_iso: new Date().toISOString(),
   }
+}
+
+function sortedCompactions(records: CompactionRecord[]): CompactionRecord[] {
+  return [...records].sort((a, b) =>
+    a.from_message_id < b.from_message_id ? -1 : a.from_message_id > b.from_message_id ? 1 : 0,
+  )
 }
 
 async function persist(state: SessionState): Promise<void> {
