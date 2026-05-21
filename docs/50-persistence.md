@@ -47,8 +47,10 @@ Notes:
 |---|---|
 | Plugin `server()` init | Note storage dir; lazy per-session load. |
 | First time we see a `sessionID` in the hook | Try to read sidecar; absent → empty in-memory state for this session. |
-| `pc_compact` tool succeeds | Append record to in-memory state; write file (atomic). |
+| `partial_compact` tool succeeds | Append record to in-memory state; write file (atomic). |
 | Subsequent hook fires | Read in-memory state (no disk hit); collapse view. |
+| Native Opencode compaction starts | Append active partial summaries to the native compaction prompt context. |
+| Native Opencode compaction makes a record's endpoints unresolvable | Prune that stale record from sidecar and cache. |
 | Session end | Nothing extra; last successful write is already on disk. |
 
 ### Atomic write
@@ -65,7 +67,7 @@ record persists.
 ### In-memory cache
 
 Per-process `Map<SessionID, SessionState>`. Loaded once per session
-(on first hook fire or first `pc_compact` for the session), written
+(on first hook fire or first `partial_compact` for the session), written
 through on every mutation. Hook does not re-read from disk per call —
 that would add fs latency to every LLM round-trip.
 
@@ -78,8 +80,9 @@ F10):
   `{sessionId}.json.bad-{epoch}`, treat as empty.
 - `schema_version > 1` → refuse to operate on that sidecar with a
   clear error.
-- Record references a message ID Opencode's `/compact` already
-  discarded → silently skip during view rewrite; keep record (cheap).
+- Record references a message ID Opencode's native compaction already
+  discarded → skip during view rewrite and prune after seeing a native
+  compaction part in the transformed view.
 - Concurrent Opencode processes on same session → out of scope for v0;
   atomic rename mitigates worst case (last writer wins).
 
@@ -116,6 +119,3 @@ Opencode-internals dependency, and the same failure modes DCP runs in
 production with. Revisit in v0.2 only if Opencode exposes a non-
 `experimental` plugin API for arbitrary Parts AND a `filterCompacted`
 contract that honours partial ranges.
-
-Subagent transcript referenced in
-`/tmp/claude-30033/.../tasks/ac5ea0d30863a904b.output`.

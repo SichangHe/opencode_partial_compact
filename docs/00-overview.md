@@ -10,7 +10,7 @@ the v1 draft and why we cut scope.
 One tool:
 
 ```text
-pc_compact(from_message_id, to_message_id, summary) -> { n_messages_replaced }
+partial_compact(from_message_id, to_message_id, summary) -> { n_messages_replaced }
 ```
 
 Replaces a contiguous range of past messages (inclusive on both ends)
@@ -49,24 +49,28 @@ estimated break-even.
 - **Refuse to load** if `@tarquinen/opencode-dcp` is in the resolved
   plugin list. Both rewrite the message array; running both produces
   conflicting ID semantics. Error message points users at docs.
-- **Refuse to load** if `oh-my-openagent` is listed after us. Our
+- **Refuse to load** if `oh-my-openagent` is listed before us. Our
   compactions must run before its `toolPairValidator` and synthetic
   turn injectors. See [`60-coexistence.md`](60-coexistence.md).
 
-## Persistence
+## Persistence and native compaction
 
-> Pending [spike](../PLAN-partial-compact.md). Two options:
-> (a) write a `CompactionPart` into Opencode's `PartTable` via the
-> plugin SDK; let `filterCompactedEffect` honour it. (b) JSON sidecar
-> at `~/.local/share/opencode/storage/plugin/opencode-partial-compact/
-> {sessionId}.json` like DCP.
-> [`50-persistence.md`](50-persistence.md) updates after spike returns.
+State is a JSON sidecar at
+`~/.local/share/opencode/storage/plugin/opencode-partial-compact/{sessionId}.json`.
+The hook rewrites only the model-visible in-memory view; the SQLite log remains
+untouched.
+
+Native Opencode compaction is handled explicitly: before native compaction,
+`experimental.session.compacting` appends active partial summaries to the
+compaction prompt context; after native compaction, stale sidecar records are
+pruned only after the full session message list confirms both range endpoints
+are gone. See [`50-persistence.md`](50-persistence.md).
 
 ## Bun, ESM, public-ready, in this repo
 
 - Build: bun. Runtime: bun (Opencode bundles bun).
-- `package.json`: `type: "module"`, `peerDependencies:
-  { "@opencode-ai/plugin": ">=1.4.3" }`.
+- `package.json`: `type: "module"`, package exports for server and TUI,
+  `peerDependencies` on `@opencode-ai/plugin` and `@opencode-ai/sdk`.
 - Repo layout suitable for `bun publish` later. License + README at
   top level when we publish.
 
@@ -78,9 +82,10 @@ estimated break-even.
 | 01-open-questions.md | OQs A..E — all resolved. | Resolved. |
 | 02-critique-findings.md | Opus max critique that drove the v0 cut. | Historical. |
 | 10-turn-log-model.md | IDs, log vs view, compaction record. | v0 |
-| 20-agent-tools.md | The `pc_compact` tool API. | v0 |
+| 20-agent-tools.md | The `partial_compact` tool API. | v0 |
 | 30-opencode-integration.md | Hook surface, plugin shape. | v0 |
 | 40-kv-cache-strategy.md | Corrected cache math. | v0 |
-| 50-persistence.md | Sidecar or piggyback — pending spike. | Pending. |
+| 50-persistence.md | Sidecar persistence and native compaction reconciliation. | Implemented. |
 | 60-coexistence.md | DCP + oh-my-openagent rules. | v0 |
 | 70-failure-modes.md | F-codes still in scope. | v0 |
+| 80-maintainer-handoff.md | Current implementation map and pickup checklist. | Current |

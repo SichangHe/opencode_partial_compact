@@ -6,7 +6,7 @@
 |---|---|---|---|
 | **Log** (immutable) | Opencode SQLite `MessageTable` + `PartTable` | Opencode core only | session lifetime |
 | **View** (per-call) | `WithParts[]` in memory | `experimental.chat.messages.transform` plugins | one LLM call |
-| **Compaction state** | TBD (see [`50-persistence.md`](50-persistence.md)) | this plugin's `pc_compact` | session lifetime |
+| **Compaction state** | JSON sidecar (see [`50-persistence.md`](50-persistence.md)) | this plugin's `partial_compact` | session lifetime |
 
 We never modify the log. Our hook rewrites the view per call using the
 compaction state.
@@ -74,9 +74,8 @@ how other plugins should treat it.
   whichever message survives (the first one in the range).
 - **Compaction whose IDs no longer resolve.** Opencode's own
   `/compact` may have run and discarded the messages our record
-  references. Hook silently skips such records (and logs at debug).
-  The record is not removed from state — re-resolving may become
-  possible if `/compact` is undone in a future Opencode (unlikely,
-  but cheap to keep).
+  references. Hook skips such records in the transformed view. If a
+  native `compaction` part is present, a full-session lookup confirms
+  whether both endpoints are gone before the sidecar record is pruned.
 - **Empty visible context after compaction.** Allowed. The synthetic
   marker is still valid context.

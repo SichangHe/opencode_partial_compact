@@ -8,18 +8,24 @@ opencode-partial-compact/
     name: "opencode-partial-compact"
     type: "module"
     main: "./dist/index.js"
-    peerDependencies: { "@opencode-ai/plugin": ">=1.4.3" }
+    exports: ".", "./server", "./tui"
+    peerDependencies: { "@opencode-ai/plugin": ">=1.15.0", "@opencode-ai/sdk": ">=1.15.0" }
   tsconfig.json
   src/
     index.ts          # PluginModule default export
     plugin.ts         # server() body
+    compacting.ts     # native Opencode compaction context hook
     hook.ts           # messages.transform handler
-    tool.ts           # pc_compact tool definition
-    state.ts          # persistence (sidecar or piggyback per spike)
+    tool.ts           # partial_compact tool definition
+    tui.ts            # /partial_compact TUI command
+    tui-checkpoints.ts# checkpoint picker + one-shot agent prompt
+    state.ts          # sidecar persistence
     validate.ts       # range validation
     log.ts            # optional debug log
   test/
     snapshot.test.ts  # F4 byte-stability test
+    compacting.test.ts
+    tui-checkpoints.test.ts
     validate.test.ts
     state.test.ts
   dist/               # bun build output
@@ -38,8 +44,9 @@ export default mod
 
 ```ts
 {
-  tool: { pc_compact: ... },
+  tool: { partial_compact: ... },
   "experimental.chat.messages.transform": handler,
+  "experimental.session.compacting": handler,
 }
 ```
 
@@ -52,8 +59,8 @@ Empirically validated (POC):
    npm publish required for local use.
 2. User adds `"opencode-partial-compact"` (npm name) or
    `"file:///abs/path/to/dist/index.js"` to their `plugin` array.
-3. Opencode's loader (`Bun.resolve(entry, configDir)` then dynamic
-   import; binary string-line 215730 in v1.14.46) resolves either form.
+3. For the slash command, user also adds `"opencode-partial-compact"`
+   or `"file:///abs/path/to/dist/tui.js"` to TUI plugin config.
 
 ## Hook execution flow
 
@@ -68,18 +75,31 @@ Opencode runLoop
   AI-SDK middleware → applyCaching → LLM
 ```
 
-We **MUST** run before oh-my-openagent. Enforced at `server()` init
-(see `60-coexistence.md`); we error out if the plugin order is wrong.
+Native Opencode compaction path:
+
+```text
+Opencode native compaction starts
+  experimental.session.compacting
+    [opencode-partial-compact]               (append partial summaries)
+  experimental.chat.messages.transform        (us — collapse selected head)
+  native compaction model call
+  later messages.transform sees native compaction parts
+    [opencode-partial-compact]               (safely prune stale sidecar records)
+```
+
+We **MUST** run before oh-my-openagent. The check is deferred to first hook use
+because `server()` must not call the Opencode HTTP client during bootstrap;
+we error out if the plugin order is wrong.
 
 ## Hooks we consume
 
-- `Hooks.tool` — register `pc_compact`.
+- `Hooks.tool` — register `partial_compact`.
 - `experimental.chat.messages.transform` — rewrite the view.
-- `event` — (optional, low priority) listen for `session.created` to
-  pre-load state.
+- `experimental.session.compacting` — append active partial summaries
+  to native compaction prompt context.
 
 We do NOT consume `experimental.chat.system.transform`,
-`experimental.session.compacting`, or `chat.params`.
+`experimental.compaction.autocontinue`, or `chat.params`.
 
 ## Tool execute path
 
@@ -113,11 +133,9 @@ Project-local `.opencode/opencode-partial-compact.jsonc` or user-global
 No `inject_id_tags`, no `min_age_parts`, no `warn_on_plugin_order` —
 all dropped per v0 scope or hardened to errors.
 
-## What we deliberately don't hook
+## Boundaries
 
-- `experimental.chat.system.transform`
-- `experimental.session.compacting`
-- `experimental.compaction.autocontinue`
-- `chat.params`, `chat.headers`, `tool.execute.*`
-
-`/compact` (full compaction) remains entirely under user control.
+- We cannot change Opencode's native auto-compaction trigger threshold
+  through public plugin APIs. We make native compaction preserve partial
+  summaries and reconcile our sidecar state afterward.
+- `/compact` and automatic native compaction remain Opencode-owned.
