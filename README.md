@@ -5,8 +5,14 @@ Empirically validated against Opencode 1.14.46.
 
 ## What it does
 
-Exposes one tool — `pc_compact(from_message_id, to_message_id, summary)` — that lets the
+Exposes one tool — `partial_compact(from_message_id, to_message_id, summary)` — that lets the
 agent replace a contiguous range of past messages with a short summary it writes.
+It also exposes a TUI slash command, `/partial_compact`, that lets the user pick
+the checkpoint to compact through. The command compacts from the first eligible
+uncompacted message through that checkpoint, then asks the agent to summarize
+that exact range with `partial_compact`.
+Older local checkouts exposed this agent tool as `pc_compact`; update any saved
+prompts or automation to call `partial_compact` instead.
 The originals remain in Opencode's session log; only the in-memory view sent to
 the LLM is modified. This shrinks token usage without destroying history.
 
@@ -25,6 +31,25 @@ Or for a local checkout:
 ```json
 {
   "plugin": ["file:///absolute/path/to/dist/index.js"]
+}
+```
+
+For the slash command, add the TUI plugin target to `.opencode/tui.json` or your
+user TUI config:
+
+```json
+{
+  "plugin": ["opencode-partial-compact"]
+}
+```
+
+Opencode's plugin installer detects both the server target and the `./tui`
+target from this package. For a local checkout, keep the server path above and
+add the TUI entrypoint separately:
+
+```json
+{
+  "plugin": ["file:///absolute/path/to/dist/tui.js"]
 }
 ```
 

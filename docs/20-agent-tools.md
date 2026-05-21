@@ -1,13 +1,20 @@
 # Agent Tools (v0)
 
-One tool. Prefixed `pc_` to avoid collisions with oh-my-openagent and
-Opencode built-ins.
+One tool. Named `partial_compact` to match the user-facing slash command while
+remaining clear of oh-my-openagent and Opencode built-ins. The optional TUI entrypoint also registers
+`/partial_compact` and `/partial-compact`; the command opens a checkpoint picker
+and submits an instruction for the agent to call this tool from the first
+eligible uncompacted message through the selected checkpoint.
 
-## `pc_compact`
+Older local checkouts exposed the same operation as `pc_compact`. New prompts
+and automation should call `partial_compact`; the old name is intentionally not
+registered as an alias so the model sees a single unambiguous compaction tool.
+
+## `partial_compact`
 
 ```jsonc
 {
-  "name": "pc_compact",
+  "name": "partial_compact",
   "description":
     "Replace a contiguous range of past messages in your context with a single summary you write. The originals stay in the session log but are removed from your working view. Use to drop content you no longer need to remember — e.g. file reads that turned out irrelevant, edit-then-fix loops, long CLI outputs whose conclusion is the only part that matters.\n\nPrefer compacting RECENT unneeded content over rewriting deep history. Compacting the middle of history invalidates prompt cache; tail-region compactions are near-free.\n\nThe summary will replace the entire range — write it like a note to your future self: state what happened, what's relevant, and reference file names / tool names you may want to recall.",
   "args": {
@@ -34,7 +41,7 @@ Opencode built-ins.
 ## Validation performed at call time
 
 - Range non-empty and within current session. Else error
-  `"range outside this session"`.
+  `"message msg... not found in this session"`.
 - Range does not overlap any active compaction. Else error
   `"range overlaps compaction starting at msg..."`.
 - Range does not include any synthetic compaction marker we previously
