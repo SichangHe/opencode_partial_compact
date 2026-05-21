@@ -4,7 +4,7 @@ import { homedir } from "node:os"
 import type { PluginInput, Plugin } from "@opencode-ai/plugin"
 import { setLogPath, debugLog } from "./log.js"
 import { messagesTransformHandler } from "./hook.js"
-import { sessionCompactingHandler } from "./compacting.js"
+import { maybeInjectReminder } from "./reminder.js"
 import { buildCompactTool } from "./tool.js"
 import type { PluginConfig } from "./tool.js"
 
@@ -14,6 +14,9 @@ const DEFAULT_CONFIG: PluginConfig = {
   enabled: true,
   max_summary_chars: 2000,
   debug_log_path: null,
+  reminder_enabled: true,
+  reminder_context_fraction: 0.1,
+  reminder_min_tokens: 4000,
 }
 
 /** Walk up from cwd to $HOME looking for .opencode/{CONFIG_FILENAME}. */
@@ -50,7 +53,7 @@ async function loadConfig(directory: string): Promise<PluginConfig> {
 }
 
 /**
- * Coexistence check. Runs lazily on first chat/native-compaction hook fire,
+ * Coexistence check. Runs lazily on first chat hook fire,
  * NOT during `server()` — the HTTP server isn't ready at plugin-load time
  * and calling `client.config.get()` then would hang opencode bootstrap.
  *
@@ -124,16 +127,28 @@ export const server: Plugin = async (ctx) => {
       }
     : async () => { /* no-op when disabled */ }
 
-  const wrappedCompactingHook = cfg.enabled
-    ? async (input: { sessionID: string }, output: { context: string[]; prompt?: string }) => {
+  const wrappedSystemHook = cfg.enabled
+    ? async (input: { sessionID?: string; model?: { limit?: { context?: number } } }, output: { system: string[] }) => {
+        if (!input.sessionID) return
         await coexistenceCheck()
-        await sessionCompactingHandler(input, output)
+        const resp = await ctx.client.session.messages({
+          path: { id: input.sessionID },
+          throwOnError: true,
+        })
+        const reminderInput = {
+          sessionID: input.sessionID,
+          output,
+          messages: resp.data ?? [],
+          cfg,
+          ...(input.model ? { model: input.model } : {}),
+        }
+        await maybeInjectReminder(reminderInput)
       }
     : async () => { /* no-op when disabled */ }
 
   return {
     tool: { partial_compact: buildCompactTool(ctx.client, cfg) },
     "experimental.chat.messages.transform": wrappedHook,
-    "experimental.session.compacting": wrappedCompactingHook,
+    "experimental.chat.system.transform": wrappedSystemHook,
   }
 }
