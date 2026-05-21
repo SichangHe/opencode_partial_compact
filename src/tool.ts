@@ -11,7 +11,7 @@ export type PluginConfig = {
 }
 
 /**
- * Build and return the `pc_compact` tool definition.
+ * Build and return the `partial_compact` tool definition.
  * Captures the plugin client and config at construction time.
  */
 export function buildCompactTool(
@@ -44,7 +44,7 @@ export function buildCompactTool(
       let { summary } = args
       const sessionID = ctx.sessionID
 
-      debugLog(`pc_compact called: from=${from_message_id} to=${to_message_id} session=${sessionID}`)
+      debugLog(`partial_compact called: from=${from_message_id} to=${to_message_id} session=${sessionID}`)
 
       // Truncate summary if over cap
       let truncated = false
