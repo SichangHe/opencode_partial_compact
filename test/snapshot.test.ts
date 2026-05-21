@@ -7,8 +7,12 @@
  * This test MUST pass before any change to hook.ts ships.
  */
 
-import { describe, it, expect } from "bun:test"
-import { applyCompactions, syntheticText, syntheticPartId } from "../src/hook"
+import { describe, it, expect, beforeEach, afterEach } from "bun:test"
+import { applyCompactions, messagesTransformHandler, syntheticText, syntheticPartId } from "../src/hook"
+import { join } from "node:path"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { addCompaction, loadState, _clearCache, _setStorageDir } from "../src/state"
 import type { CompactionRecord } from "../src/validate"
 
 // ---------------------------------------------------------------------------
@@ -151,15 +155,114 @@ describe("F4: hook output byte-stability", () => {
     expect(msgs[1]?.info.id).toBe(MSG_C)
   })
 
+  it("applyCompactions reports skipped unresolvable records", () => {
+    const msgs = makeMessages().slice(2)
+    const result = applyCompactions(msgs, [RECORD])
+
+    expect(result.applied).toHaveLength(0)
+    expect(result.skipped[0]?.from_message_id).toBe(MSG_A)
+  })
+
   it("the surviving first message has exactly one synthetic part", () => {
     const msgs = makeMessages()
     applyCompactions(msgs, [RECORD])
     const first = msgs[0]!
     expect(first.parts).toHaveLength(1)
-    const part = first.parts[0]! as { type: string; text: string; synthetic: boolean; source: string }
+    const part = first.parts[0]! as unknown as { type: string; text: string; synthetic: boolean; source: string }
     expect(part.type).toBe("text")
     expect(part.synthetic).toBe(true)
     expect(part.source).toBe("opencode-partial-compact")
     expect(part.text).toBe(EXPECTED_SYNTHETIC_TEXT)
+  })
+})
+
+describe("messagesTransformHandler native compaction reconciliation", () => {
+  let tempDir: string
+  let storageRoot: string
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "pc-hook-test-"))
+    storageRoot = join(tempDir, "plugin", "opencode-partial-compact")
+    _setStorageDir(storageRoot)
+    _clearCache()
+  })
+
+  afterEach(async () => {
+    _setStorageDir(null)
+    _clearCache()
+    await rm(tempDir, { recursive: true, force: true })
+  })
+
+  it("does not prune skipped records without a full-session resolver", async () => {
+    const sid = "ses01HOOKPRUNE01"
+    await addCompaction(sid, RECORD)
+
+    const output = {
+      messages: [{
+        info: { id: "msg01NATIVE", sessionID: sid },
+        parts: [{
+          id: "prt01NATIVE",
+          sessionID: sid,
+          messageID: "msg01NATIVE",
+          type: "compaction" as const,
+          auto: true,
+        }],
+      }],
+    }
+
+    await messagesTransformHandler({}, output)
+
+    const state = await loadState(sid)
+    expect(state.compactions).toHaveLength(1)
+  })
+
+  it("does not prune skipped records that still exist in the full session", async () => {
+    const sid = "ses01HOOKKEEP01"
+    await addCompaction(sid, RECORD)
+
+    const output = {
+      messages: [{
+        info: { id: "msg01NATIVE", sessionID: sid },
+        parts: [{
+          id: "prt01NATIVE",
+          sessionID: sid,
+          messageID: "msg01NATIVE",
+          type: "compaction" as const,
+          auto: true,
+        }],
+      }],
+    }
+
+    await messagesTransformHandler({}, output, {
+      resolveSessionMessageIDs: async () => new Set([MSG_A, MSG_B, "msg01NATIVE"]),
+    })
+
+    const state = await loadState(sid)
+    expect(state.compactions).toHaveLength(1)
+  })
+
+  it("prunes stale sidecar records when native compaction removes them from the full session", async () => {
+    const sid = "ses01HOOKPRUNE02"
+    await addCompaction(sid, RECORD)
+
+    const output = {
+      messages: [{
+        info: { id: "msg01NATIVE", sessionID: sid },
+        parts: [{
+          id: "prt01NATIVE",
+          sessionID: sid,
+          messageID: "msg01NATIVE",
+          type: "compaction" as const,
+          auto: true,
+        }],
+      }],
+    }
+
+    await messagesTransformHandler({}, output, {
+      resolveSessionMessageIDs: async () => new Set(["msg01NATIVE"]),
+    })
+
+    const state = await loadState(sid)
+    expect(state.compactions).toHaveLength(0)
   })
 })

@@ -4,6 +4,7 @@ import { homedir } from "node:os"
 import type { PluginInput, Plugin } from "@opencode-ai/plugin"
 import { setLogPath, debugLog } from "./log.js"
 import { messagesTransformHandler } from "./hook.js"
+import { sessionCompactingHandler } from "./compacting.js"
 import { buildCompactTool } from "./tool.js"
 import type { PluginConfig } from "./tool.js"
 
@@ -49,7 +50,7 @@ async function loadConfig(directory: string): Promise<PluginConfig> {
 }
 
 /**
- * Coexistence check. Runs lazily on first hook fire (or first tool call),
+ * Coexistence check. Runs lazily on first chat/native-compaction hook fire,
  * NOT during `server()` — the HTTP server isn't ready at plugin-load time
  * and calling `client.config.get()` then would hang opencode bootstrap.
  *
@@ -111,12 +112,28 @@ export const server: Plugin = async (ctx) => {
   const wrappedHook = cfg.enabled
     ? async (input: object, output: { messages: Array<{ info: { id: string; sessionID: string }; parts: unknown[] }> }) => {
         await coexistenceCheck()
-        await messagesTransformHandler(input, output as Parameters<typeof messagesTransformHandler>[1])
+        await messagesTransformHandler(input, output as Parameters<typeof messagesTransformHandler>[1], {
+          resolveSessionMessageIDs: async (sessionID: string) => {
+            const resp = await ctx.client.session.messages({
+              path: { id: sessionID },
+              throwOnError: true,
+            })
+            return new Set((resp.data ?? []).map(msg => msg.info.id))
+          },
+        })
+      }
+    : async () => { /* no-op when disabled */ }
+
+  const wrappedCompactingHook = cfg.enabled
+    ? async (input: { sessionID: string }, output: { context: string[]; prompt?: string }) => {
+        await coexistenceCheck()
+        await sessionCompactingHandler(input, output)
       }
     : async () => { /* no-op when disabled */ }
 
   return {
-    tool: { pc_compact: buildCompactTool(ctx.client, cfg) },
+    tool: { partial_compact: buildCompactTool(ctx.client, cfg) },
     "experimental.chat.messages.transform": wrappedHook,
+    "experimental.session.compacting": wrappedCompactingHook,
   }
 }

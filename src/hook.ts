@@ -1,11 +1,20 @@
 import type { Part } from "@opencode-ai/sdk"
-import { getCompactionsSync, warmCache } from "./state.js"
+import { getCompactionsSync, replaceCompactions, warmCache } from "./state.js"
 import { debugLog } from "./log.js"
 import type { CompactionRecord } from "./validate.js"
 
 type WithParts = {
   info: { id: string; sessionID: string }
   parts: Part[]
+}
+
+export type MessagesTransformOptions = {
+  resolveSessionMessageIDs?: (sessionID: string) => Promise<ReadonlySet<string>>
+}
+
+export type ApplyCompactionsResult = {
+  applied: CompactionRecord[]
+  skipped: CompactionRecord[]
 }
 
 /**
@@ -32,7 +41,7 @@ export function syntheticPartId(rec: CompactionRecord): string {
 export function applyCompactions(
   messages: WithParts[],
   records: CompactionRecord[],
-): void {
+): ApplyCompactionsResult {
   // Process in reverse order so index positions remain valid as we splice
   // But we need ascending order for correctness per spec; process from last to first
   // so that splicing earlier indices doesn't affect later ones we haven't processed.
@@ -40,18 +49,23 @@ export function applyCompactions(
   // Simpler: collect indices to remove and do one pass.
 
   const toRemove = new Set<number>()
+  const applied: CompactionRecord[] = []
+  const skipped: CompactionRecord[] = []
 
   for (const rec of records) {
     const fromIdx = messages.findIndex(m => m.info.id === rec.from_message_id)
     if (fromIdx === -1) {
       debugLog(`Skipping unresolvable compaction record ${rec.from_message_id} (message not in view)`)
+      skipped.push(rec)
       continue
     }
     const toIdx = messages.findIndex(m => m.info.id === rec.to_message_id)
     if (toIdx === -1) {
       debugLog(`Skipping unresolvable compaction record ${rec.to_message_id} (to message not in view)`)
+      skipped.push(rec)
       continue
     }
+    applied.push(rec)
 
     const lo = Math.min(fromIdx, toIdx)
     const hi = Math.max(fromIdx, toIdx)
@@ -85,6 +99,11 @@ export function applyCompactions(
   for (const idx of sortedRemove) {
     messages.splice(idx, 1)
   }
+  return { applied, skipped }
+}
+
+function hasNativeCompactionPart(messages: WithParts[]): boolean {
+  return messages.some(msg => msg.parts.some(part => part.type === "compaction"))
 }
 
 /**
@@ -93,6 +112,7 @@ export function applyCompactions(
 export async function messagesTransformHandler(
   _input: object,
   output: { messages: WithParts[] },
+  options: MessagesTransformOptions = {},
 ): Promise<void> {
   if (output.messages.length === 0) return
 
@@ -104,5 +124,27 @@ export async function messagesTransformHandler(
   debugLog(`messages.transform fired — session=${sessionID} messages=${output.messages.length} active_records=${records.length}`)
   if (records.length === 0) return
 
-  applyCompactions(output.messages, records)
+  const result = applyCompactions(output.messages, records)
+  if (result.skipped.length > 0 && hasNativeCompactionPart(output.messages)) {
+    if (!options.resolveSessionMessageIDs) {
+      debugLog("Skipped compaction records after native compaction, but no full-session resolver is available; not pruning")
+      return
+    }
+    let fullMessageIDs: ReadonlySet<string>
+    try {
+      fullMessageIDs = await options.resolveSessionMessageIDs(sessionID)
+    } catch (err) {
+      debugLog(`Skipped pruning stale compaction records — failed to fetch full session messages: ${String(err)}`)
+      return
+    }
+    const stale = new Set(
+      result.skipped
+        .filter(rec => !fullMessageIDs.has(rec.from_message_id) && !fullMessageIDs.has(rec.to_message_id))
+        .map(rec => `${rec.from_message_id}::${rec.to_message_id}`),
+    )
+    if (stale.size === 0) return
+    const kept = records.filter(rec => !stale.has(`${rec.from_message_id}::${rec.to_message_id}`))
+    debugLog(`Pruning ${stale.size} stale compaction record(s) after native compaction`)
+    await replaceCompactions(sessionID, kept)
+  }
 }
