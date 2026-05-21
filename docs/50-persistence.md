@@ -28,10 +28,16 @@ convention Opencode already manages; DCP uses
       "from_message_id": "msg01HZQ..3",
       "to_message_id":   "msg01HZQ..7",
       "summary": "Read 12 files (...) — irrelevant.",
+      "n_messages_replaced": 5,
       "created_at_iso": "2026-05-16T..."
     }
     // sorted ascending by from_message_id (= time order on monotonic IDs)
   ],
+  "last_reminder": {
+    "visible_token_estimate": 42000,
+    "message_id": "msg01HZQ..9",
+    "created_at_iso": "2026-05-16T..."
+  },
   "last_written_iso": "2026-05-16T..."
 }
 ```
@@ -39,6 +45,8 @@ convention Opencode already manages; DCP uses
 Notes:
 - No separate compaction ID. The `from_message_id` is the natural key
   (records can't overlap, so it's unique).
+- `n_messages_replaced` and `last_reminder` are observability/cadence fields;
+  older sidecars without them remain valid.
 - `last_written_iso` is for human debugging only; not used in logic.
 
 ## I/O
@@ -49,7 +57,8 @@ Notes:
 | First time we see a `sessionID` in the hook | Try to read sidecar; absent → empty in-memory state for this session. |
 | `partial_compact` tool succeeds | Append record to in-memory state; write file (atomic). |
 | Subsequent hook fires | Read in-memory state (no disk hit); collapse view. |
-| Native Opencode compaction starts | Append active partial summaries to the native compaction prompt context. |
+| Reminder threshold reached | Store the last reminder message ID and visible-token estimate. |
+| Native Opencode compaction starts | No prompt injection; native compaction sees the transformed message view. |
 | Native Opencode compaction makes a record's endpoints unresolvable | Prune that stale record from sidecar and cache. |
 | Session end | Nothing extra; last successful write is already on disk. |
 

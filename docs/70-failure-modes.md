@@ -96,7 +96,7 @@ naming the required order. See `60-coexistence.md`.
 
 POC ran against Opencode 1.14.46. The packaged plugin targets
 `@opencode-ai/plugin` and `@opencode-ai/sdk` `>=1.15.0`, which provide the TUI
-plugin types and `experimental.session.compacting` hook used by this checkout.
+plugin types and `experimental.chat.system.transform` hook used by this checkout.
 
 **v0 handling.** Pin `peerDependencies: ">=1.15.0"`. Track Opencode releases
 manually until a CI hookup. Document the empirically-validated Opencode version

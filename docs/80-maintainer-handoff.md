@@ -20,7 +20,7 @@ This is the durable pickup map for the current implementation.
 | TUI slash command | `src/tui.ts` |
 | TUI checkpoint prompt | `src/tui-checkpoints.ts` |
 | Message-view rewrite | `src/hook.ts` |
-| Native compaction context | `src/compacting.ts` |
+| Compaction reminder cadence | `src/reminder.ts` |
 | Sidecar persistence | `src/state.ts` |
 | Range validation | `src/validate.ts` |
 
@@ -30,12 +30,13 @@ This is the durable pickup map for the current implementation.
 - TUI registers `/partial_compact` and `/partial-compact` and emits a one-shot prompt that tells the agent to call `partial_compact` once with exact IDs.
 - Successful tool calls append a sidecar record under `~/.local/share/opencode/storage/plugin/opencode-partial-compact/{sessionId}.json`.
 - `experimental.chat.messages.transform` replaces each compacted range in the model-visible view with one synthetic text part. It does not mutate the SQLite log.
-- `experimental.session.compacting` appends active partial summaries to Opencode's native compaction prompt context.
+- `experimental.chat.system.transform` occasionally reminds the agent to consider `partial_compact` after estimated visible context growth.
+- Native compaction receives no injected partial summaries; Opencode still runs `experimental.chat.messages.transform` before the native compaction model call, so it sees the collapsed view.
 - After native compaction, stale sidecar records are pruned only when a native `compaction` part is visible and a full-session message lookup confirms both endpoints are gone.
 
 ## Known boundary
 
-The plugin cannot change Opencode's native auto-compaction trigger threshold through public plugin APIs. It can only change what native compaction sees and keep plugin sidecar state consistent afterward.
+The plugin cannot rewrite a previous assistant message's already-recorded token usage. If Opencode schedules auto-compaction from that stale record, the plugin cannot cancel the scheduling through current public hooks. What is fixed here: every subsequent normal model call and native compaction model call uses the `messages.transform` output, i.e. the partial-compacted effective context.
 
 ## Validation
 
@@ -47,16 +48,16 @@ bun run typecheck
 bun run build
 ```
 
-Recent verified state: 36 tests passed, typecheck passed, build passed, and a runtime `/experimental/tool/ids` smoke check exposed `partial_compact` and not `pc_compact`.
+Recent verified state: run `bun test`, `bun run typecheck`, and `bun run build` after edits.
 
 ## Recent important decisions
 
 - Rename model-facing tool from `pc_compact` to `partial_compact` for clarity; no alias is registered so the model sees one compaction tool.
 - Keep sidecar persistence instead of piggybacking on Opencode `CompactionPart`; see [`50-persistence.md`](50-persistence.md).
-- Use plugin-only mitigation for native compaction: `experimental.session.compacting` context plus safe sidecar pruning. Core trigger accounting remains out of plugin scope.
+- Do not inject partial summaries into native/full compaction prompts. Rely on `messages.transform` and prune stale sidecar records safely afterward.
+- Add periodic reminders and stronger tool wording because agents otherwise under-use optional context-hygiene tools.
 
 ## Next likely work
 
-- Add an optional cap for how many partial summaries are injected into native compaction context if real sessions accumulate many records.
 - Consider surfacing stale-record/prune status in tool results or docs if users need observability.
 - Re-check plugin peer dependency lower bound against installed Opencode plugin packages before publishing.

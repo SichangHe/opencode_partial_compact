@@ -60,11 +60,17 @@ State is a JSON sidecar at
 The hook rewrites only the model-visible in-memory view; the SQLite log remains
 untouched.
 
-Native Opencode compaction is handled explicitly: before native compaction,
-`experimental.session.compacting` appends active partial summaries to the
-compaction prompt context; after native compaction, stale sidecar records are
-pruned only after the full session message list confirms both range endpoints
-are gone. See [`50-persistence.md`](50-persistence.md).
+Native Opencode compaction is handled without prompt injection. Opencode calls
+`experimental.chat.messages.transform` before normal model calls and before the
+native compaction model call, so the native compactor sees our already-collapsed
+view. We do not append partial summaries to full-compaction prompts. After
+native compaction, stale sidecar records are pruned only after the full session
+message list confirms both range endpoints are gone. See
+[`50-persistence.md`](50-persistence.md).
+
+Agents also get a periodic `experimental.chat.system.transform` reminder when
+the estimated visible context grows by roughly one tenth of the model context
+window since the last reminder.
 
 ## Bun, ESM, public-ready, in this repo
 

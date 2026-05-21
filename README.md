@@ -7,6 +7,9 @@ Empirically validated against Opencode 1.14.46.
 
 Exposes one tool — `partial_compact(from_message_id, to_message_id, summary)` — that lets the
 agent replace a contiguous range of past messages with a short summary it writes.
+The tool description and periodic system reminders nudge the agent to compact
+bulky tool output, resolved detours, and obsolete investigation logs when those
+details no longer need to stay verbatim in context.
 It also exposes a TUI slash command, `/partial_compact`, that lets the user pick
 the checkpoint to compact through. The command compacts from the first eligible
 uncompacted message through that checkpoint, then asks the agent to summarize
@@ -62,6 +65,9 @@ Create `.opencode/opencode-partial-compact.jsonc` in your project root, or
 {
   "enabled": true,
   "max_summary_chars": 2000,
+  "reminder_enabled": true,
+  "reminder_context_fraction": 0.1,
+  "reminder_min_tokens": 4000,
   "debug_log_path": null  // set to a file path to enable debug logging
 }
 ```
@@ -91,3 +97,5 @@ Compaction records are stored as JSON sidecars at:
 ```
 
 Writes are atomic (write-to-tmp, fsync, rename).
+On process restart, the first message transform reloads this sidecar and
+reconstructs the same compacted model-visible view.

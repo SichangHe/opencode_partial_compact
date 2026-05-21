@@ -14,8 +14,8 @@ opencode-partial-compact/
   src/
     index.ts          # PluginModule default export
     plugin.ts         # server() body
-    compacting.ts     # native Opencode compaction context hook
     hook.ts           # messages.transform handler
+    reminder.ts       # system reminder cadence + visible-token estimate
     tool.ts           # partial_compact tool definition
     tui.ts            # /partial_compact TUI command
     tui-checkpoints.ts# checkpoint picker + one-shot agent prompt
@@ -24,7 +24,7 @@ opencode-partial-compact/
     log.ts            # optional debug log
   test/
     snapshot.test.ts  # F4 byte-stability test
-    compacting.test.ts
+    reminder.test.ts
     tui-checkpoints.test.ts
     validate.test.ts
     state.test.ts
@@ -46,7 +46,7 @@ export default mod
 {
   tool: { partial_compact: ... },
   "experimental.chat.messages.transform": handler,
-  "experimental.session.compacting": handler,
+  "experimental.chat.system.transform": reminderHandler,
 }
 ```
 
@@ -79,8 +79,6 @@ Native Opencode compaction path:
 
 ```text
 Opencode native compaction starts
-  experimental.session.compacting
-    [opencode-partial-compact]               (append partial summaries)
   experimental.chat.messages.transform        (us — collapse selected head)
   native compaction model call
   later messages.transform sees native compaction parts
@@ -95,10 +93,10 @@ we error out if the plugin order is wrong.
 
 - `Hooks.tool` — register `partial_compact`.
 - `experimental.chat.messages.transform` — rewrite the view.
-- `experimental.session.compacting` — append active partial summaries
-  to native compaction prompt context.
+- `experimental.chat.system.transform` — occasionally remind the agent
+  to consider partial compaction after visible context grows.
 
-We do NOT consume `experimental.chat.system.transform`,
+We do NOT consume `experimental.session.compacting`,
 `experimental.compaction.autocontinue`, or `chat.params`.
 
 ## Tool execute path
@@ -126,6 +124,9 @@ Project-local `.opencode/opencode-partial-compact.jsonc` or user-global
   "$schema": "./schema.json",
   "enabled": true,
   "max_summary_chars": 2000,
+  "reminder_enabled": true,
+  "reminder_context_fraction": 0.1,
+  "reminder_min_tokens": 4000,
   "debug_log_path": null
 }
 ```
@@ -135,7 +136,10 @@ all dropped per v0 scope or hardened to errors.
 
 ## Boundaries
 
-- We cannot change Opencode's native auto-compaction trigger threshold
-  through public plugin APIs. We make native compaction preserve partial
-  summaries and reconcile our sidecar state afterward.
-- `/compact` and automatic native compaction remain Opencode-owned.
+- Opencode's current auto-compaction trigger can still be based on the previous
+  assistant message's recorded token usage. The plugin cannot rewrite that
+  already-recorded number, but both normal prompting and native compaction pass
+  through `experimental.chat.messages.transform`, so subsequent model-visible
+  context and native compaction inputs use the partial-compacted view.
+- `/compact` and automatic native compaction remain Opencode-owned. We do not
+  inject partial summaries into their prompts.

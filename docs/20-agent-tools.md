@@ -16,7 +16,7 @@ registered as an alias so the model sees a single unambiguous compaction tool.
 {
   "name": "partial_compact",
   "description":
-    "Replace a contiguous range of past messages in your context with a single summary you write. The originals stay in the session log but are removed from your working view. Use to drop content you no longer need to remember — e.g. file reads that turned out irrelevant, edit-then-fix loops, long CLI outputs whose conclusion is the only part that matters.\n\nPrefer compacting RECENT unneeded content over rewriting deep history. Compacting the middle of history invalidates prompt cache; tail-region compactions are near-free.\n\nThe summary will replace the entire range — write it like a note to your future self: state what happened, what's relevant, and reference file names / tool names you may want to recall.",
+    "Replace a contiguous range of past messages in your context with a single summary you write. Ask yourself: do you need to remember everything currently in your context window? If not, use this tool to replace no-longer-needed parts — bulky tool output, resolved detours, failed edit/debug loops, obsolete file reads, or one-off investigation logs — with a clear and succinct summary. The originals stay in the session log but are removed from your working view.\n\nPrefer compacting RECENT unneeded content over rewriting deep history. Compacting the middle of history invalidates prompt cache; tail-region compactions are near-free. After a phase stabilizes, proactively compact raw logs/details and keep only decisions, file paths, errors, assumptions, and outcomes needed later.\n\nThe summary will replace the entire range — write it like a note to your future self: state what happened, what's relevant, and reference file names / tool names you may want to recall.",
   "args": {
     "from_message_id": {
       "type": "string",
@@ -33,10 +33,22 @@ registered as an alias so the model sees a single unambiguous compaction tool.
   },
   "returns": {
     "n_messages_replaced": "int",
-    "truncated": "bool (true if summary was longer than max_summary_chars)"
+    "truncated": "bool (true if summary was longer than max_summary_chars)",
+    "active_compactions": "int",
+    "total_known_messages_replaced": "int (sum for records created by versions that stored this count)",
+    "note": "string"
   }
 }
 ```
+
+## Periodic reminder
+
+The server hook adds one short system reminder after the estimated
+model-visible context grows by roughly `reminder_context_fraction` of the model
+context window since the last reminder. Default: `0.1`, with a
+`reminder_min_tokens` floor of `4000`. The reminder is not persisted as a
+session message; only its last emitted estimate is stored in the sidecar so it
+does not repeat every turn.
 
 ## Validation performed at call time
 

@@ -45,11 +45,10 @@ Implemented and locally verified. Core runtime surfaces:
 
 - Server plugin: `src/plugin.ts` registers `partial_compact`,
   `experimental.chat.messages.transform`, and
-  `experimental.session.compacting`.
+  `experimental.chat.system.transform`.
 - TUI plugin: `src/tui.ts` registers `/partial_compact` and
   `/partial-compact`.
 - Sidecar state: `src/state.ts`; view rewrite and stale-record
-  reconciliation: `src/hook.ts`; native compaction context:
-  `src/compacting.ts`.
+  reconciliation: `src/hook.ts`; reminder cadence: `src/reminder.ts`.
 - Current pickup checklist lives in
   [`80-maintainer-handoff.md`](80-maintainer-handoff.md).
