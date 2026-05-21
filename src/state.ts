@@ -8,6 +8,11 @@ export type SessionState = {
   schema_version: 1
   session_id: string
   compactions: CompactionRecord[]
+  last_reminder?: {
+    visible_token_estimate: number
+    message_id: string
+    created_at_iso: string
+  }
   last_written_iso: string
 }
 
@@ -96,6 +101,17 @@ export async function addCompaction(sessionID: string, record: CompactionRecord)
 export async function replaceCompactions(sessionID: string, records: CompactionRecord[]): Promise<void> {
   const state = await loadState(sessionID)
   state.compactions = sortedCompactions(records)
+  state.last_written_iso = new Date().toISOString()
+  await persist(state)
+}
+
+/** Record that a context-hygiene reminder was injected for this session. */
+export async function recordReminder(
+  sessionID: string,
+  reminder: NonNullable<SessionState["last_reminder"]>,
+): Promise<void> {
+  const state = await loadState(sessionID)
+  state.last_reminder = reminder
   state.last_written_iso = new Date().toISOString()
   await persist(state)
 }

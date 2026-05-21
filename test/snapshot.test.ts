@@ -265,4 +265,21 @@ describe("messagesTransformHandler native compaction reconciliation", () => {
     const state = await loadState(sid)
     expect(state.compactions).toHaveLength(0)
   })
+
+  it("reloads sidecar records after process cache loss and keeps the compacted view", async () => {
+    const sid = SESSION_ID
+    await addCompaction(sid, RECORD)
+    _clearCache()
+
+    const output = { messages: makeMessages() }
+    await messagesTransformHandler({}, output)
+
+    expect(output.messages).toHaveLength(2)
+    expect(output.messages[0]?.parts[0]).toMatchObject({
+      type: "text",
+      text: EXPECTED_SYNTHETIC_TEXT,
+      synthetic: true,
+      source: "opencode-partial-compact",
+    })
+  })
 })

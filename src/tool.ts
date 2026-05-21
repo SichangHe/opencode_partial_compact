@@ -8,6 +8,9 @@ export type PluginConfig = {
   enabled: boolean
   max_summary_chars: number
   debug_log_path: string | null
+  reminder_enabled: boolean
+  reminder_context_fraction: number
+  reminder_min_tokens: number
 }
 
 /**
@@ -20,7 +23,7 @@ export function buildCompactTool(
 ) {
   return tool({
     description:
-      "Replace a contiguous range of past messages in your context with a single summary you write. The originals stay in the session log but are removed from your working view. Use to drop content you no longer need to remember — e.g. file reads that turned out irrelevant, edit-then-fix loops, long CLI outputs whose conclusion is the only part that matters.\n\nPrefer compacting RECENT unneeded content over rewriting deep history. Compacting the middle of history invalidates prompt cache; tail-region compactions are near-free.\n\nThe summary will replace the entire range — write it like a note to your future self: state what happened, what's relevant, and reference file names / tool names you may want to recall.",
+      "Replace a contiguous range of past messages in your context with a single summary you write. Ask yourself: do you need to remember everything currently in your context window? If not, use this tool to replace no-longer-needed parts — bulky tool output, resolved detours, failed edit/debug loops, obsolete file reads, or one-off investigation logs — with a clear and succinct summary. The originals stay in the session log but are removed from your working view.\n\nPrefer compacting RECENT unneeded content over rewriting deep history. Compacting the middle of history invalidates prompt cache; tail-region compactions are near-free. After a phase stabilizes, proactively compact raw logs/details and keep only decisions, file paths, errors, assumptions, and outcomes needed later.\n\nThe summary will replace the entire range — write it like a note to your future self: state what happened, what's relevant, and reference file names / tool names you may want to recall.",
     args: {
       from_message_id: tool.schema
         .string()
@@ -106,12 +109,22 @@ export function buildCompactTool(
         to_message_id,
         summary,
         created_at_iso: new Date().toISOString(),
+        n_messages_replaced,
       }
+      const active_compactions = records.length + 1
+      const total_known_messages_replaced = records
+        .reduce((sum, rec) => sum + (rec.n_messages_replaced ?? 0), n_messages_replaced)
       await addCompaction(sessionID, record)
 
       debugLog(`Compaction recorded: ${from_message_id}..${to_message_id}, ${n_messages_replaced} messages`)
 
-      return JSON.stringify({ n_messages_replaced, truncated })
+      return JSON.stringify({
+        n_messages_replaced,
+        truncated,
+        active_compactions,
+        total_known_messages_replaced,
+        note: "The compacted range is removed from the model-visible view on subsequent calls; the original session log is unchanged.",
+      })
     },
   })
 }

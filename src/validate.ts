@@ -14,6 +14,7 @@ export type CompactionRecord = {
   to_message_id: string
   summary: string
   created_at_iso: string
+  n_messages_replaced?: number
 }
 
 /** Pure range-validation errors. */
