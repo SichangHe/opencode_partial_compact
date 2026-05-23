@@ -5,7 +5,7 @@ import type { PluginInput, Plugin } from "@opencode-ai/plugin"
 import { setLogPath, debugLog } from "./log.js"
 import { messagesTransformHandler } from "./hook.js"
 import { maybeInjectReminder } from "./reminder.js"
-import { buildCompactTool } from "./tool.js"
+import { buildCompactTool, buildInstructionTool } from "./tool.js"
 import type { PluginConfig } from "./tool.js"
 
 const CONFIG_FILENAME = "opencode-partial-compact.jsonc"
@@ -15,8 +15,43 @@ const DEFAULT_CONFIG: PluginConfig = {
   max_summary_chars: 2000,
   debug_log_path: null,
   reminder_enabled: true,
-  reminder_context_fraction: 0.1,
-  reminder_min_tokens: 4000,
+  reminder_interval_tokens: 16000,
+}
+
+type ConfigData = {
+  plugin?: Array<string | [string, unknown]>
+  compaction?: { auto?: boolean }
+}
+
+type ConfigClient = {
+  config: {
+    get(input: { throwOnError: true }): Promise<{ data?: ConfigData }>
+  }
+}
+
+type RawPluginConfig = Partial<PluginConfig> & {
+  reminder_context_fraction?: number
+  reminder_min_tokens?: number
+}
+
+export function normalizePluginConfig(parsed: RawPluginConfig): PluginConfig {
+  const cfg = { ...DEFAULT_CONFIG, ...parsed }
+  if (
+    parsed.reminder_interval_tokens === undefined &&
+    typeof parsed.reminder_context_fraction === "number" &&
+    typeof parsed.reminder_min_tokens === "number" &&
+    Number.isFinite(parsed.reminder_context_fraction) &&
+    Number.isFinite(parsed.reminder_min_tokens) &&
+    parsed.reminder_context_fraction > 0 &&
+    parsed.reminder_min_tokens > 0
+  ) {
+    cfg.reminder_interval_tokens = Math.max(
+      parsed.reminder_min_tokens,
+      Math.floor(parsed.reminder_min_tokens * 10 * parsed.reminder_context_fraction),
+    )
+    debugLog("Migrated deprecated reminder_context_fraction/reminder_min_tokens config to reminder_interval_tokens")
+  }
+  return cfg
 }
 
 /** Walk up from cwd to $HOME looking for .opencode/{CONFIG_FILENAME}. */
@@ -45,8 +80,8 @@ async function loadConfig(directory: string): Promise<PluginConfig> {
   try {
     const raw = await readFile(configPath, "utf8")
     const stripped = raw.replace(/\/\/[^\n]*/g, "")
-    const parsed = JSON.parse(stripped) as Partial<PluginConfig>
-    return { ...DEFAULT_CONFIG, ...parsed }
+    const parsed = JSON.parse(stripped) as RawPluginConfig
+    return normalizePluginConfig(parsed)
   } catch {
     return { ...DEFAULT_CONFIG }
   }
@@ -62,21 +97,28 @@ async function loadConfig(directory: string): Promise<PluginConfig> {
  * to the user on their first chat turn.
  */
 export function makeCoexistenceCheck(
-  client: PluginInput["client"],
+  client: ConfigClient,
 ): () => Promise<void> {
   let done = false
   return async () => {
     if (done) return
-    done = true
-    let pluginList: string[]
+    let configData: ConfigData
     try {
       const resp = await client.config.get({ throwOnError: true })
-      const raw = (resp.data?.plugin ?? []) as Array<string | [string, unknown]>
-      pluginList = raw.map(e => Array.isArray(e) ? e[0] : e)
+      configData = (resp.data ?? {}) as ConfigData
     } catch (err) {
-      debugLog(`Coexistence check skipped — config fetch failed: ${String(err)}`)
-      return
+      throw new Error(`opencode-partial-compact: refusing to operate — failed to verify Opencode config: ${String(err)}`)
     }
+
+    if (configData.compaction?.auto !== false) {
+      throw new Error(
+        "opencode-partial-compact: refusing to operate — set compaction.auto=false in opencode.json. " +
+        "Opencode schedules auto-compaction from the previous assistant token record before plugins can recompute the partial-compacted effective context.",
+      )
+    }
+
+    const raw = configData.plugin ?? []
+    const pluginList = raw.map(e => Array.isArray(e) ? e[0] : e)
 
     const ourName = "opencode-partial-compact"
     if (pluginList.includes("@tarquinen/opencode-dcp")) {
@@ -96,6 +138,7 @@ export function makeCoexistenceCheck(
         "oh-my-openagent in opencode.json.",
       )
     }
+    done = true
     debugLog("Coexistence check passed")
   }
 }
@@ -147,7 +190,10 @@ export const server: Plugin = async (ctx) => {
     : async () => { /* no-op when disabled */ }
 
   return {
-    tool: { partial_compact: buildCompactTool(ctx.client, cfg) },
+    tool: {
+      partial_compact: buildCompactTool(ctx.client, cfg),
+      partial_compact_instructions: buildInstructionTool(),
+    },
     "experimental.chat.messages.transform": wrappedHook,
     "experimental.chat.system.transform": wrappedSystemHook,
   }

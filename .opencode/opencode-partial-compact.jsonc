@@ -2,7 +2,6 @@
   "enabled": true,
   "max_summary_chars": 2000,
   "reminder_enabled": true,
-  "reminder_context_fraction": 0.1,
-  "reminder_min_tokens": 4000,
-  "debug_log_path": "/tmp/pc-smoke.log"
+  "debug_log_path": null,
+  "reminder_interval_tokens": 16000
 }
