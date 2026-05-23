@@ -3,6 +3,8 @@ import { applyCompactions } from "./hook.js"
 import { debugLog } from "./log.js"
 import { loadState, recordReminder } from "./state.js"
 import { partialCompactInstructionPointer, partialCompactReminderExcerpt } from "./instructions.js"
+import { loadPrompt, renderPrompt } from "./prompt-loader.js"
+import { currentSessionMessageIDReference } from "./message-ids.js"
 
 type Message = { info: { id: string; sessionID: string }; parts: Part[] }
 type ModelLike = { limit?: { context?: number } }
@@ -65,13 +67,24 @@ function effectiveReminderInterval(configuredInterval: number, model: ModelLike 
 }
 
 export function reminderText(input: { tokenEstimate: number; model?: ModelLike }): string {
+  return renderPrompt(loadPrompt("partial-compact-reminder.md"), {
+    CONTEXT_STATUS: pctText(input.tokenEstimate, input.model),
+    REMINDER_EXCERPT: partialCompactReminderExcerpt(),
+    INSTRUCTION_POINTER: partialCompactInstructionPointer(),
+    INSTRUCTION_NAME: "opencode-partial-compact",
+  }).replace(/\n+/g, " ")
+}
+
+export function reminderTextWithMessageIDs(input: {
+  sessionID: string
+  tokenEstimate: number
+  messages: readonly Message[]
+  model?: ModelLike
+}): string {
   return [
-    `Partial compaction checkpoint (${pctText(input.tokenEstimate, input.model)}): built-in auto-compaction is disabled, so you must actively manage stale context with \`partial_compact\`. A low percentage is not permission to skip compaction when a phase just ended or bulky raw evidence is stale.`,
-    partialCompactReminderExcerpt(),
-    partialCompactInstructionPointer(),
-    "Before compacting, call `partial_compact_instructions` unless the full `opencode-partial-compact` instruction block is already in context.",
-    "If you later need details around a message ID, use session history tools when available: `session_search` can search for that ID within a session, and `session_read` can read broader session context.",
-  ].join(" ")
+    reminderText(input),
+    currentSessionMessageIDReference(input.sessionID, input.messages),
+  ].join("\n\n")
 }
 
 export async function maybeInjectReminder(input: {
@@ -98,10 +111,16 @@ export async function maybeInjectReminder(input: {
       message_id: messageID,
       created_at_iso: new Date().toISOString(),
     })
+    return
   }
   if (tokenEstimate < interval) return
   if (tokenEstimate - lastEstimate < interval) return
-  input.output.system.push(reminderText({ tokenEstimate, ...(input.model ? { model: input.model } : {}) }))
+  input.output.system.push(reminderTextWithMessageIDs({
+    sessionID: input.sessionID,
+    tokenEstimate,
+    messages: visible,
+    ...(input.model ? { model: input.model } : {}),
+  }))
   if (!messageID) return
   await recordReminder(input.sessionID, {
     visible_token_estimate: tokenEstimate,

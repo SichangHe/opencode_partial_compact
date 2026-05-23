@@ -1,9 +1,13 @@
 import { tool } from "@opencode-ai/plugin"
 import type { Part } from "@opencode-ai/sdk"
 import { validateRanges, type CompactionRangeInput, type ValidationError } from "./validate.js"
-import { addCompactions, loadState } from "./state.js"
+import { addCompactions, loadState, recordReminder } from "./state.js"
 import { debugLog } from "./log.js"
 import { partialCompactInstructionBlock, partialCompactInstructionPointer } from "./instructions.js"
+import { loadPrompt, renderPrompt } from "./prompt-loader.js"
+import { currentSessionMessageIDReference } from "./message-ids.js"
+import { applyCompactions } from "./hook.js"
+import { estimateVisibleTokens } from "./reminder.js"
 
 export type PluginConfig = {
   enabled: boolean
@@ -68,12 +72,52 @@ function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0
 }
 
+async function recordPostCompactionReminderBaseline(
+  sessionID: string,
+  messages: Messages,
+): Promise<void> {
+  const visible = messages.map(msg => ({ info: msg.info, parts: [...msg.parts] }))
+  applyCompactions(visible, (await loadState(sessionID)).compactions)
+  const messageID = messages.at(-1)?.info.id
+  if (!messageID) return
+  await recordReminder(sessionID, {
+    visible_token_estimate: estimateVisibleTokens(visible),
+    message_id: messageID,
+    created_at_iso: new Date().toISOString(),
+  })
+}
+
 export function buildInstructionTool() {
   return tool({
-    description: `Return the named instruction block for using partial_compact. ${partialCompactInstructionPointer()}`,
+    description: renderPrompt(loadPrompt("partial-compact-instruction-tool-description.md"), {
+      INSTRUCTION_POINTER: partialCompactInstructionPointer(),
+    }),
     args: {},
-    async execute() {
-      return partialCompactInstructionBlock()
+    async execute(_args, ctx) {
+      return partialCompactInstructionBlock() + "\n\n" + currentSessionMessageIDReference(ctx.sessionID, [])
+    },
+  })
+}
+
+export function buildInstructionToolWithClient(client: CompactToolClient) {
+  return tool({
+    description: renderPrompt(loadPrompt("partial-compact-instruction-tool-description.md"), {
+      INSTRUCTION_POINTER: partialCompactInstructionPointer(),
+    }),
+    args: {},
+    async execute(_args, ctx) {
+      try {
+        const resp = await client.session.messages({
+          path: { id: ctx.sessionID },
+          throwOnError: true,
+        })
+        const visible = (resp.data ?? []).map(msg => ({ info: msg.info, parts: [...msg.parts] }))
+        applyCompactions(visible, (await loadState(ctx.sessionID)).compactions)
+        return partialCompactInstructionBlock() + "\n\n" + currentSessionMessageIDReference(ctx.sessionID, visible)
+      } catch (err) {
+        debugLog(`partial_compact_instructions could not load message IDs for ${ctx.sessionID}: ${String(err)}`)
+        return partialCompactInstructionBlock() + "\n\n" + currentSessionMessageIDReference(ctx.sessionID, [])
+      }
     },
   })
 }
@@ -86,34 +130,37 @@ export function buildCompactTool(
   client: CompactToolClient,
   cfg: PluginConfig,
 ) {
+  const maxSummaryChars = String(cfg.max_summary_chars)
   return tool({
     description:
-      `${partialCompactInstructionPointer()} Replace one contiguous range, or multiple disjoint ranges with \`ranges\`, using summaries you write. The originals stay in the session log but are removed from your working view. Below ~50% context, still compact after phase boundaries when raw evidence is stale and conclusions are durable; do not wait for pressure unless the next step still needs the verbatim text. Prefer one batch call when compacting multiple stale ranges in the current session to save turns and KV cache.`,
+      renderPrompt(loadPrompt("partial-compact-tool-description.md"), {
+        INSTRUCTION_POINTER: partialCompactInstructionPointer(),
+      }),
     args: {
       from_message_id: tool.schema
         .string()
         .optional()
-        .describe("Starting message ID (msg...). Inclusive. Legacy single-range mode; do not mix with ranges."),
+        .describe(loadPrompt("partial-compact-arg-from-message-id.md")),
       to_message_id: tool.schema
         .string()
         .optional()
-        .describe("Ending message ID (msg...). Inclusive. Legacy single-range mode; do not mix with ranges."),
+        .describe(loadPrompt("partial-compact-arg-to-message-id.md")),
       summary: tool.schema
         .string()
         .optional()
         .describe(
-          `Concise replacement text for legacy single-range mode. Hard cap: max_summary_chars (default ${cfg.max_summary_chars}). Truncation reported in tool result.`,
+          renderPrompt(loadPrompt("partial-compact-arg-summary.md"), { MAX_SUMMARY_CHARS: maxSummaryChars }),
         ),
       ranges: tool.schema
         .array(tool.schema.object({
-          session_id: tool.schema.string().optional().describe("Session ID to compact. Omit for the current session."),
-          from_message_id: tool.schema.string().describe("Starting message ID (msg...). Inclusive."),
-          to_message_id: tool.schema.string().describe("Ending message ID (msg...). Inclusive. May equal from_message_id."),
-          summary: tool.schema.string().describe("Concise replacement text for this range. Mention relevant session IDs and why this range is safe to compact."),
+          session_id: tool.schema.string().optional().describe(loadPrompt("partial-compact-range-session-id.md")),
+          from_message_id: tool.schema.string().describe(loadPrompt("partial-compact-range-from-message-id.md")),
+          to_message_id: tool.schema.string().describe(loadPrompt("partial-compact-range-to-message-id.md")),
+          summary: tool.schema.string().describe(loadPrompt("partial-compact-range-summary.md")),
         }))
         .optional()
         .describe(
-          "Multiple disjoint ranges to compact in one tool call. Ranges may target the current session or other sessions by session_id. Do not mix with legacy from_message_id/to_message_id/summary fields.",
+          loadPrompt("partial-compact-arg-ranges.md"),
         ),
     },
 
@@ -224,6 +271,11 @@ export function buildCompactTool(
             error: `Failed to persist compactions for session ${targetSessionID}: ${String(err)}`,
             note: "All ranges are prevalidated before writes. Persistence is atomic per target session sidecar; a cross-session batch can report failure after an earlier target session was already written.",
           })
+        }
+        try {
+          await recordPostCompactionReminderBaseline(targetSessionID, messagesBySession.get(targetSessionID) ?? [])
+        } catch (err) {
+          debugLog(`Compaction persisted but reminder baseline update failed for ${targetSessionID}: ${String(err)}`)
         }
 
         for (const range of validatedRanges) {

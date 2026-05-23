@@ -5,7 +5,7 @@ import type { PluginInput, Plugin } from "@opencode-ai/plugin"
 import { setLogPath, debugLog } from "./log.js"
 import { messagesTransformHandler } from "./hook.js"
 import { maybeInjectReminder } from "./reminder.js"
-import { buildCompactTool, buildInstructionTool } from "./tool.js"
+import { buildCompactTool, buildInstructionToolWithClient } from "./tool.js"
 import type { PluginConfig } from "./tool.js"
 
 const CONFIG_FILENAME = "opencode-partial-compact.jsonc"
@@ -192,7 +192,7 @@ export const server: Plugin = async (ctx) => {
   return {
     tool: {
       partial_compact: buildCompactTool(ctx.client, cfg),
-      partial_compact_instructions: buildInstructionTool(),
+      partial_compact_instructions: buildInstructionToolWithClient(ctx.client),
     },
     "experimental.chat.messages.transform": wrappedHook,
     "experimental.chat.system.transform": wrappedSystemHook,
