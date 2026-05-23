@@ -2,14 +2,14 @@ import type { Part } from "@opencode-ai/sdk"
 import { applyCompactions } from "./hook.js"
 import { debugLog } from "./log.js"
 import { loadState, recordReminder } from "./state.js"
+import { partialCompactInstructionPointer, partialCompactReminderExcerpt } from "./instructions.js"
 
 type Message = { info: { id: string; sessionID: string }; parts: Part[] }
 type ModelLike = { limit?: { context?: number } }
 
 export type ReminderConfig = {
   reminder_enabled: boolean
-  reminder_context_fraction: number
-  reminder_min_tokens: number
+  reminder_interval_tokens: number
 }
 
 type EstPart = {
@@ -47,17 +47,31 @@ export function estimateVisibleTokens(messages: readonly Message[]): number {
   return Math.ceil(JSON.stringify(compact).length / 4)
 }
 
-export function reminderText(): string {
-  return [
-    "Partial compaction reminder: do you need to remember everything currently in your context window?",
-    "If not, consider calling `partial_compact` on no-longer-needed ranges such as bulky tool output, resolved detours, failed edit/debug loops, or obsolete file reads.",
-    "Replace them with a clear, succinct summary that preserves only decisions, file paths, errors, assumptions, and outcomes needed later.",
-  ].join(" ")
+function pctText(tokenEstimate: number, model: ModelLike | undefined): string {
+  const limit = model?.limit?.context
+  if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0) {
+    return `estimated visible context: ~${tokenEstimate} tokens`
+  }
+  const pct = Math.min(999, Math.round((tokenEstimate / limit) * 100))
+  return `estimated visible context: ~${tokenEstimate}/${limit} tokens (${pct}% of the context window)`
 }
 
-function contextLimit(model: ModelLike): number | null {
-  const limit = model.limit?.context
-  return typeof limit === "number" && Number.isFinite(limit) && limit > 0 ? limit : null
+function effectiveReminderInterval(configuredInterval: number, model: ModelLike | undefined): number {
+  const limit = model?.limit?.context
+  if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0 || limit >= configuredInterval) {
+    return configuredInterval
+  }
+  return Math.max(1, Math.floor(limit * 0.8))
+}
+
+export function reminderText(input: { tokenEstimate: number; model?: ModelLike }): string {
+  return [
+    `Partial compaction checkpoint (${pctText(input.tokenEstimate, input.model)}): built-in auto-compaction is disabled, so you must actively manage stale context with \`partial_compact\`. A low percentage is not permission to skip compaction when a phase just ended or bulky raw evidence is stale.`,
+    partialCompactReminderExcerpt(),
+    partialCompactInstructionPointer(),
+    "Before compacting, call `partial_compact_instructions` unless the full `opencode-partial-compact` instruction block is already in context.",
+    "If you later need details around a message ID, use session history tools when available: `session_search` can search for that ID within a session, and `session_read` can read broader session context.",
+  ].join(" ")
 }
 
 export async function maybeInjectReminder(input: {
@@ -69,20 +83,25 @@ export async function maybeInjectReminder(input: {
 }): Promise<void> {
   if (!input.cfg.reminder_enabled) return
   if (input.messages.length === 0) return
-  const limit = input.model ? contextLimit(input.model) : null
-  const interval = Math.max(
-    input.cfg.reminder_min_tokens,
-    Math.floor((limit ?? input.cfg.reminder_min_tokens * 10) * input.cfg.reminder_context_fraction),
-  )
+  const configuredInterval = input.cfg.reminder_interval_tokens
+  if (!Number.isFinite(configuredInterval) || configuredInterval <= 0) return
+  const interval = effectiveReminderInterval(configuredInterval, input.model)
   const state = await loadState(input.sessionID)
   const visible = input.messages.map(msg => ({ info: msg.info, parts: [...msg.parts] }))
   applyCompactions(visible, state.compactions)
   const tokenEstimate = estimateVisibleTokens(visible)
   const lastEstimate = state.last_reminder?.visible_token_estimate ?? 0
+  const messageID = input.messages.at(-1)?.info.id
+  if (tokenEstimate < lastEstimate && messageID) {
+    await recordReminder(input.sessionID, {
+      visible_token_estimate: tokenEstimate,
+      message_id: messageID,
+      created_at_iso: new Date().toISOString(),
+    })
+  }
   if (tokenEstimate < interval) return
   if (tokenEstimate - lastEstimate < interval) return
-  input.output.system.push(reminderText())
-  const messageID = input.messages.at(-1)?.info.id
+  input.output.system.push(reminderText({ tokenEstimate, ...(input.model ? { model: input.model } : {}) }))
   if (!messageID) return
   await recordReminder(input.sessionID, {
     visible_token_estimate: tokenEstimate,
