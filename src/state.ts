@@ -90,19 +90,32 @@ export async function loadStateFresh(sessionID: string): Promise<SessionState> {
 
 /** Append a compaction record and write through to disk atomically. */
 export async function addCompaction(sessionID: string, record: CompactionRecord): Promise<void> {
+  await addCompactions(sessionID, [record])
+}
+
+/** Append compaction records and write through to disk atomically once. */
+export async function addCompactions(sessionID: string, records: CompactionRecord[]): Promise<void> {
+  if (records.length === 0) return
   const state = await loadState(sessionID)
-  state.compactions.push(record)
-  state.compactions = sortedCompactions(state.compactions)
-  state.last_written_iso = new Date().toISOString()
-  await persist(state)
+  const next: SessionState = {
+    ...state,
+    compactions: sortedCompactions([...state.compactions, ...records]),
+    last_written_iso: new Date().toISOString(),
+  }
+  await persist(next)
+  cache.set(sessionID, next)
 }
 
 /** Replace compaction records and write through to disk atomically. */
 export async function replaceCompactions(sessionID: string, records: CompactionRecord[]): Promise<void> {
   const state = await loadState(sessionID)
-  state.compactions = sortedCompactions(records)
-  state.last_written_iso = new Date().toISOString()
-  await persist(state)
+  const next: SessionState = {
+    ...state,
+    compactions: sortedCompactions(records),
+    last_written_iso: new Date().toISOString(),
+  }
+  await persist(next)
+  cache.set(sessionID, next)
 }
 
 /** Record that a context-hygiene reminder was injected for this session. */
@@ -111,9 +124,13 @@ export async function recordReminder(
   reminder: NonNullable<SessionState["last_reminder"]>,
 ): Promise<void> {
   const state = await loadState(sessionID)
-  state.last_reminder = reminder
-  state.last_written_iso = new Date().toISOString()
-  await persist(state)
+  const next: SessionState = {
+    ...state,
+    last_reminder: reminder,
+    last_written_iso: new Date().toISOString(),
+  }
+  await persist(next)
+  cache.set(sessionID, next)
 }
 
 /** Get the current compaction records for a session (loads if not cached). */

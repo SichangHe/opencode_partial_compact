@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 import { join } from "node:path"
 import { mkdtemp, rm, readFile, writeFile, mkdir, readdir } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { loadState, loadStateFresh, addCompaction, replaceCompactions, _clearCache, _setStorageDir } from "../src/state"
+import { loadState, loadStateFresh, addCompaction, addCompactions, replaceCompactions, _clearCache, _setStorageDir } from "../src/state"
 
 let tempDir: string
 let storageRoot: string
@@ -91,6 +91,33 @@ describe("state round-trip", () => {
     const state = await loadState(sid)
     expect(state.compactions[0]?.from_message_id).toBe("msg01AAA")
     expect(state.compactions[1]?.from_message_id).toBe("msg01CCC")
+  })
+
+  it("addCompactions persists multiple records with one sorted state update", async () => {
+    const sid = "ses01BATCH01"
+    await addCompactions(sid, [
+      { from_message_id: "msg01CCC", to_message_id: "msg01DDD", summary: "C", created_at_iso: "" },
+      { from_message_id: "msg01AAA", to_message_id: "msg01BBB", summary: "A", created_at_iso: "" },
+    ])
+
+    _clearCache()
+    const state = await loadState(sid)
+    expect(state.compactions).toHaveLength(2)
+    expect(state.compactions[0]?.from_message_id).toBe("msg01AAA")
+    expect(state.compactions[1]?.from_message_id).toBe("msg01CCC")
+  })
+
+  it("does not mutate cached compactions when addCompactions cannot persist", async () => {
+    const sid = "ses01FAILWRITE01"
+    const notADirectory = join(tempDir, "not-a-directory")
+    await writeFile(notADirectory, "file blocks mkdir", "utf8")
+    _setStorageDir(notADirectory)
+
+    await expect(addCompactions(sid, [
+      { from_message_id: "msg01AAA", to_message_id: "msg01BBB", summary: "should not cache", created_at_iso: "" },
+    ])).rejects.toThrow()
+
+    expect((await loadState(sid)).compactions).toHaveLength(0)
   })
 
   it("replaceCompactions persists a pruned sorted record set", async () => {
