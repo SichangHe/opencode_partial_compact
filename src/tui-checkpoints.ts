@@ -1,6 +1,7 @@
 import type { Part } from "@opencode-ai/sdk/v2"
 import type { CompactionRecord } from "./validate.js"
 import { partialCompactInstructionBlock } from "./instructions.js"
+import { loadPrompt, renderPrompt } from "./prompt-loader.js"
 
 export type TuiMessage = {
   id: string
@@ -102,14 +103,10 @@ export function buildPartialCompactPrompt(input: {
   toMessageID: string
   checkpointTitle: string
 }): string {
-  return `Manual partial compaction requested from the TUI.
-
-${partialCompactInstructionBlock()}
-
-Range:
-- from_message_id: ${input.fromMessageID}
-- to_message_id: ${input.toMessageID}
-- selected checkpoint: ${input.checkpointTitle}
-
-Write a concise replacement summary for exactly this contiguous range, then call partial_compact once with those exact message IDs and your summary. If you identify additional disjoint stale ranges while following the instruction, use one batch call with ranges instead of repeated partial_compact calls. Preserve only facts needed later: decisions, file paths, tool outputs, errors, assumptions, outcomes, and session IDs. Do not ask follow-up questions. After the tool succeeds, report the result briefly.`
+  return renderPrompt(loadPrompt("tui-partial-compact.md"), {
+    INSTRUCTION_BLOCK: partialCompactInstructionBlock(),
+    FROM_MESSAGE_ID: input.fromMessageID,
+    TO_MESSAGE_ID: input.toMessageID,
+    CHECKPOINT_TITLE: input.checkpointTitle,
+  })
 }

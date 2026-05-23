@@ -24,7 +24,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && rm -rf dist/prompts && cp -R src/prompts dist/prompts",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },
