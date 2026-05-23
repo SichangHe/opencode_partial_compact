@@ -129,8 +129,10 @@ in the tool result.
 - Interrupted-turn consistency (OQ-14). Single-process, atomic state
   writes after tool returns; the failure window is small. v0.1 may
   add transactionality.
-- Agent copying msg-IDs into file edits (OQ-15). v0 doesn't inject
-  IDs into the model view at all (no `<part id>` tags), so the model
-  only sees IDs in tool descriptions/results — surface area is small.
+- Agent copying msg-IDs into file edits (OQ-15). v0 injects ordered
+  `msg...` ID snapshots only in partial-compact reminders and instruction-tool
+  results, not as per-part tags. The surface area is intentionally narrow, but
+  agents must treat snapshots as endpoint references only and refresh after
+  compaction or later turns.
 - `PartID`/`MessageID` format upgrades (OQ-16). When Opencode
   changes ID format we cut a major version.

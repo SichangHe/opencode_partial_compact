@@ -23,7 +23,9 @@ enough to warrant cleanup. The full tool and reminder contract lives in
 [`docs/20-agent-tools.md`](docs/20-agent-tools.md). Reminders are mandatory
 checkpoints with a short phase-boundary excerpt; read
 `partial_compact_instructions` before compacting unless the named instruction is
-already in context.
+already in context. Reminders and `partial_compact_instructions` include the
+current session's ordered `msg...` IDs so agents can choose stable current-session
+range endpoints without guessing.
 
 It also exposes a TUI slash command, `/partial_compact`, that lets the user pick
 the checkpoint to compact through. The command asks the agent to summarize that
@@ -118,7 +120,7 @@ unknown, the configured target is used unchanged.
 
 ```sh
 bun install
-bun run build   # tsc → dist/
+bun run build   # tsc → dist/ and copies src/prompts → dist/prompts
 bun test        # snapshot + validate + state tests
 bun x tsc --noEmit  # type-check only
 ```

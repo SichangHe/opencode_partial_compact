@@ -17,7 +17,9 @@ opencode-partial-compact/
     hook.ts           # messages.transform handler
     reminder.ts       # system reminder cadence + visible-token estimate
     tool.ts           # partial_compact + instruction tool definitions
-    instructions.ts   # canonical agent instruction block
+    instructions.ts   # prompt accessors
+    prompt-loader.ts  # Markdown prompt loader + renderer
+    prompts/          # Markdown prompt source files copied to dist/prompts
     tui.ts            # /partial_compact TUI command
     tui-checkpoints.ts# checkpoint picker + one-shot agent prompt
     state.ts          # sidecar persistence
@@ -29,7 +31,7 @@ opencode-partial-compact/
     tui-checkpoints.test.ts
     validate.test.ts
     state.test.ts
-  dist/               # bun build output
+  dist/               # tsc output plus copied prompt Markdown
 ```
 
 ## Plugin entry
@@ -100,9 +102,15 @@ we error out if the plugin order is wrong.
   visible context size, includes context-window percentage when available, and
   includes a phase-boundary excerpt plus the named-instruction pointer so agents
   compact stale bulky context even below 50% after durable conclusions are
-  captured. `reminder_interval_tokens` remains the configured target cadence;
-  when a known model context window is smaller than that target, the runtime
-  clamps the effective interval to an internal ~80% safety point.
+  captured. It also appends ordered current-session `msg...` IDs after existing
+  partial compactions are applied. `reminder_interval_tokens` remains the
+  configured target cadence; when a known model context window is smaller than
+  that target, the runtime clamps the effective interval to an internal ~80%
+  safety point.
+- `partial_compact` records a fresh post-compaction visible-token estimate after
+  each successful write. This makes the reminder cadence count from the compacted
+  view immediately instead of waiting for the next system hook to notice the
+  shrink.
 
 We do NOT consume `experimental.session.compacting`,
 `experimental.compaction.autocontinue`, or `chat.params`.

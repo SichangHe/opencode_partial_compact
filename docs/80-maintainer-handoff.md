@@ -17,7 +17,8 @@ This is the durable pickup map for the current implementation.
 |---|---|
 | Server plugin registration | `src/plugin.ts` |
 | Agent tool schema | `src/tool.ts` |
-| Canonical agent instruction text | `src/instructions.ts` |
+| Prompt Markdown source files | `src/prompts/*.md` |
+| Prompt loading/rendering | `src/prompt-loader.ts`, `src/instructions.ts` |
 | TUI slash command | `src/tui.ts` |
 | TUI checkpoint prompt | `src/tui-checkpoints.ts` |
 | Message-view rewrite | `src/hook.ts` |
@@ -27,11 +28,12 @@ This is the durable pickup map for the current implementation.
 
 ## Implemented behavior
 
-- Agent tools are `partial_compact` and `partial_compact_instructions`. `partial_compact` supports legacy single-range fields and batch `ranges: [{ session_id?, from_message_id, to_message_id, summary }]`.
+- Agent tools are `partial_compact` and `partial_compact_instructions`. `partial_compact` supports legacy single-range fields and batch `ranges: [{ session_id?, from_message_id, to_message_id, summary }]`. The instruction tool appends ordered current-session `msg...` IDs for range selection.
 - TUI registers `/partial_compact` and `/partial-compact` and emits a one-shot prompt with the full `opencode-partial-compact` instruction block, exact selected IDs, and guidance to use one `ranges` call if additional disjoint stale ranges are found.
 - Successful tool calls append a sidecar record under `~/.local/share/opencode/storage/plugin/opencode-partial-compact/{sessionId}.json`.
 - `experimental.chat.messages.transform` replaces each compacted range in the model-visible view with one synthetic text part. It does not mutate the SQLite log.
-- `experimental.chat.system.transform` injects a mandatory `partial_compact` reminder after estimated visible context growth. It reports visible-token usage, includes context-window percentage when model limits are available, includes a short phase-boundary excerpt plus the named-instruction pointer, and tells the agent to compact stale bulky context after phase boundaries even below 50%. The configured 16k interval is the target cadence; known smaller model windows clamp to an internal ~80% safety interval.
+- `experimental.chat.system.transform` injects a mandatory `partial_compact` reminder after estimated visible context growth. It reports visible-token usage, includes context-window percentage when model limits are available, includes a short phase-boundary excerpt plus the named-instruction pointer, appends ordered current-session `msg...` IDs, and tells the agent to compact stale bulky context after phase boundaries even below 50%. The configured 16k interval is the target cadence; known smaller model windows clamp to an internal ~80% safety interval.
+- Successful `partial_compact` calls immediately update `last_reminder.visible_token_estimate` to the post-compaction visible-token estimate so reminders do not fire again merely because a compaction just happened.
 - Native compaction receives no injected partial summaries; Opencode still runs `experimental.chat.messages.transform` before the native compaction model call, so it sees the collapsed view.
 - After native compaction, stale sidecar records are pruned only when a native `compaction` part is visible and a full-session message lookup confirms both endpoints are gone.
 

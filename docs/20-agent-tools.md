@@ -19,24 +19,23 @@ read-only instruction tool.
 ```jsonc
 {
   "name": "partial_compact",
-  "description":
-    "Before calling `partial_compact`, read instruction `opencode-partial-compact` via `partial_compact_instructions` if that instruction block is not already in your context window. Replace one contiguous range, or multiple disjoint ranges with `ranges`, using summaries you write...",
+  "description": "from src/prompts/partial-compact-tool-description.md",
   "args": {
     "from_message_id": {
       "type": "string",
-      "description": "Starting message ID (msg...). Inclusive. Legacy single-range mode; do not mix with ranges."
+      "description": "from src/prompts/partial-compact-arg-from-message-id.md"
     },
     "to_message_id": {
       "type": "string",
-      "description": "Ending message ID (msg...). Inclusive. Legacy single-range mode; do not mix with ranges."
+      "description": "from src/prompts/partial-compact-arg-to-message-id.md"
     },
     "summary": {
       "type": "string",
-      "description": "Concise replacement text for legacy single-range mode."
+      "description": "from src/prompts/partial-compact-arg-summary.md"
     },
     "ranges": {
       "type": "array",
-      "description": "Multiple disjoint ranges to compact in one call. Each item accepts optional session_id plus from_message_id, to_message_id, and summary. Do not mix with legacy fields."
+      "description": "from src/prompts/partial-compact-arg-ranges.md"
     }
   },
   "returns": {
@@ -51,6 +50,10 @@ read-only instruction tool.
 }
 ```
 
+The model-visible tool descriptions and argument descriptions are Markdown
+source files under `src/prompts/`; `bun run build` copies them to
+`dist/prompts/` for runtime loading.
+
 Batch mode prevalidates all requested ranges before any sidecar is written.
 Ranges must be disjoint within each target session and must not overlap active
 compaction records. Persistence is atomic per target session sidecar; when a
@@ -59,6 +62,11 @@ target session was already written. Omitting `session_id` targets the current
 session; including it targets another session whose message IDs the agent has
 verified.
 
+After a successful write, the tool records the current post-compaction visible
+token estimate as the reminder baseline. This prevents a just-compacted session
+from receiving another reminder on the next turn unless enough new visible
+context has actually accumulated.
+
 ## `partial_compact_instructions`
 
 Returns `<instruction name="opencode-partial-compact">...</instruction>`. The
@@ -66,6 +74,9 @@ instruction explains why to compact, what to preserve, how to choose tail vs.
 aggressive pruning based on context-window percentage, how to retain important
 system/user prompt requirements while compacting pasted logs/tool output, how
 to mention compacted session IDs, and when to prefer one `ranges` batch call.
+The tool also appends the current session's ordered `msg...` IDs so the agent
+has stable endpoints for current-session `from_message_id` / `to_message_id`
+ranges without guessing.
 
 ## Periodic reminder
 
@@ -81,18 +92,25 @@ window smaller than the configured target, the runtime clamps the effective
 interval to an internal ~80% safety point. If the model limit is unknown, the
 configured target is used unchanged.
 
-The reminder is intentionally mandatory, not just a suggestion. This plugin
-requires Opencode native auto-compaction to be disabled, so the agent is
-responsible for keeping context healthy with `partial_compact`. The reminder
-shows the estimated visible token count and, when the model context limit is
-available, the percentage of the context window in use. It includes a short
-phase-boundary excerpt and points to `partial_compact_instructions` for the full
-named instruction block. The full guide is not repeated every cadence tick;
-the TUI slash command and `partial_compact_instructions` return the full block.
+The reminder is a mandatory context-hygiene checkpoint, not a command to compact
+every time it appears. This plugin requires Opencode native auto-compaction to
+be disabled, so the agent is responsible for keeping context healthy with
+`partial_compact` when there is context pressure or bulky stale raw evidence.
+The reminder shows the estimated visible token count and, when the model context
+limit is available, the percentage of the context window in use. It includes a
+short phase-boundary excerpt and points to `partial_compact_instructions` for
+the full named instruction block. The full guide is not repeated every cadence
+tick; the TUI slash command and `partial_compact_instructions` return the full
+block.
+Every reminder also appends the current session history's ordered `msg...` IDs
+after existing partial-compaction sidecars are applied. The list is a snapshot;
+agents should use the newest list and refresh `partial_compact_instructions`
+after `partial_compact` or later turns before choosing endpoints.
 
-Agents must not treat a low percentage as "do nothing" when a phase has ended.
-Below 50%, compaction is still useful after investigation, implementation,
-verification, review, commit, or push if raw evidence has low future value.
+Agents must not treat a low percentage as "never compact" when a phase has
+ended, but they also must not compact merely because a reminder appeared. Below
+50%, compaction is useful after investigation, implementation, verification,
+review, commit, or push only if raw evidence has low future value.
 Compact large diffs after commit, repeated status/diff/test output after
 results are known, resolved reviewer transcripts, failed probes after the
 conclusion is recorded, obsolete file reads, and background-agent progress logs
@@ -108,7 +126,8 @@ message ID inside a session and `session_read` can recover broader context from
 that session.
 
 After compaction shrinks the visible view, the sidecar reminder baseline is
-reset so cadence does not stall until context exceeds the old high-water mark.
+reset to the post-compaction estimate so cadence neither stalls behind the old
+high-water mark nor fires again immediately on the next turn.
 
 ## Validation performed at call time
 
