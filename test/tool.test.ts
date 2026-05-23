@@ -1,12 +1,15 @@
 import { describe, expect, it, beforeEach, afterEach } from "bun:test"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect } from "effect"
+import type { PluginInput } from "@opencode-ai/plugin"
 import type { ToolContext } from "@opencode-ai/plugin/tool"
 import type { Part } from "@opencode-ai/sdk"
-import { buildCompactTool, buildInstructionTool, type CompactToolClient } from "../src/tool"
+import { server } from "../src/plugin"
+import { buildCompactTool, buildInstructionTool, buildInstructionToolWithClient, type CompactToolClient } from "../src/tool"
 import { loadState, _clearCache, _setStorageDir } from "../src/state"
+import { estimateVisibleTokens, maybeInjectReminder } from "../src/reminder"
+import { applyCompactions } from "../src/hook"
 
 const sid = "ses01TOOL00000000000000"
 
@@ -25,6 +28,14 @@ function client(): CompactToolClient {
   }
 }
 
+function clientWith(data: Array<{ info: { id: string; sessionID: string }; parts: Part[] }>): CompactToolClient {
+  return {
+    session: {
+      messages: async () => ({ data }),
+    },
+  }
+}
+
 function context(): ToolContext {
   return {
     sessionID: sid,
@@ -34,7 +45,26 @@ function context(): ToolContext {
     worktree: "/tmp/project",
     abort: new AbortController().signal,
     metadata: () => {},
-    ask: () => Effect.void,
+    ask: async () => {},
+  }
+}
+
+const pluginClient = {
+  ...client(),
+  config: {
+    get: async () => ({ data: { compaction: { auto: false }, plugin: ["opencode-partial-compact"] } }),
+  },
+}
+
+function pluginInput(directory: string): PluginInput {
+  return {
+    client: pluginClient as unknown as PluginInput["client"],
+    project: {} as unknown as PluginInput["project"],
+    directory,
+    worktree: directory,
+    experimental_workspace: { register: () => {} },
+    serverUrl: new URL("http://127.0.0.1"),
+    $: (() => {}) as unknown as PluginInput["$"],
   }
 }
 
@@ -235,5 +265,137 @@ describe("partial_compact tool", () => {
 
     expect(output).toContain("<instruction name=\"opencode-partial-compact\">")
     expect(output).toContain("ranges: [{ session_id?, from_message_id, to_message_id, summary }, ...]")
+  })
+
+  it("returns current-session message IDs with the instruction block when client-backed", async () => {
+    const instructionTool = buildInstructionToolWithClient(client())
+    const raw = await instructionTool.execute({}, context())
+    const output = typeof raw === "string" ? raw : raw.output
+
+    expect(output).toContain("<instruction name=\"opencode-partial-compact\">")
+    expect(output).toContain("Current-session message IDs for `partial_compact`")
+    expect(output).toContain(`session_id: ${sid}`)
+    expect(output).toContain("msg01A, msg01B, msg01C, msg01D")
+  })
+
+  it("returns instructions when current-session message IDs cannot be loaded", async () => {
+    const failingClient: CompactToolClient = {
+      session: {
+        messages: async () => { throw new Error("session unavailable") },
+      },
+    }
+    const instructionTool = buildInstructionToolWithClient(failingClient)
+    const raw = await instructionTool.execute({}, context())
+    const output = typeof raw === "string" ? raw : raw.output
+
+    expect(output).toContain("<instruction name=\"opencode-partial-compact\">")
+    expect(output).toContain("No current-session message IDs are available yet")
+  })
+
+  it("caps current-session message ID snapshots", async () => {
+    const manyMessages = Array.from({ length: 130 }, (_, idx) => ({
+      info: { id: `msg${String(idx).padStart(3, "0")}`, sessionID: sid },
+      parts: [] as Part[],
+    }))
+    const instructionTool = buildInstructionToolWithClient(clientWith(manyMessages))
+    const raw = await instructionTool.execute({}, context())
+    const output = typeof raw === "string" ? raw : raw.output
+
+    expect(output).toContain("34 older middle IDs omitted")
+    expect(output).toContain("msg000")
+    expect(output).toContain("msg129")
+    expect(output).not.toContain("msg030")
+  })
+
+  it("registers the client-backed instruction tool from the plugin server", async () => {
+    const projectDir = join(tempDir, "project")
+    const configDir = join(projectDir, ".opencode")
+    await mkdir(configDir, { recursive: true })
+    await writeFile(join(configDir, "opencode-partial-compact.jsonc"), '{ "debug_log_path": null }')
+    const hooks = await server(pluginInput(projectDir))
+    if (!hooks.tool) throw new Error("expected plugin server to register tools")
+    const raw = await hooks.tool.partial_compact_instructions.execute({}, context())
+    const output = typeof raw === "string" ? raw : raw.output
+
+    expect(output).toContain("Current-session message IDs for `partial_compact`")
+    expect(output).toContain("msg01A, msg01B, msg01C, msg01D")
+  })
+
+  it("omits message IDs hidden by existing current-session compactions", async () => {
+    await loadState(sid)
+    const compact = buildCompactTool(client(), {
+      enabled: true,
+      max_summary_chars: 2000,
+      debug_log_path: null,
+      reminder_enabled: true,
+      reminder_interval_tokens: 16000,
+    })
+    await compact.execute({
+      from_message_id: "msg01A",
+      to_message_id: "msg01B",
+      summary: "old range already compacted",
+    }, context())
+
+    const instructionTool = buildInstructionToolWithClient(client())
+    const raw = await instructionTool.execute({}, context())
+    const output = typeof raw === "string" ? raw : raw.output
+
+    expect(output).toContain("msg01A, msg01C, msg01D")
+    expect(output).not.toContain("msg01B")
+  })
+
+  it("rebaselines reminder cadence immediately after a successful compaction", async () => {
+    const compact = buildCompactTool(client(), {
+      enabled: true,
+      max_summary_chars: 2000,
+      debug_log_path: null,
+      reminder_enabled: true,
+      reminder_interval_tokens: 16000,
+    })
+
+    await compact.execute({
+      from_message_id: "msg01A",
+      to_message_id: "msg01B",
+      summary: "old setup and command output are now durable elsewhere",
+    }, context())
+
+    const state = await loadState(sid)
+    const visible = messages.map(msg => ({ info: msg.info, parts: [...msg.parts] }))
+    applyCompactions(visible, state.compactions)
+
+    expect(state.last_reminder?.message_id).toBe("msg01D")
+    expect(state.last_reminder?.visible_token_estimate).toBe(estimateVisibleTokens(visible))
+  })
+
+  it("does not inject another reminder on the next turn after tool compaction", async () => {
+    const bulkyMessages: Array<{ info: { id: string; sessionID: string }; parts: Part[] }> = [
+      {
+        info: { id: "msg01A", sessionID: sid },
+        parts: [{ id: "prt01A", sessionID: sid, messageID: "msg01A", type: "text", text: "x".repeat(9000) }],
+      },
+      {
+        info: { id: "msg01B", sessionID: sid },
+        parts: [{ id: "prt01B", sessionID: sid, messageID: "msg01B", type: "text", text: "keep" }],
+      },
+    ]
+    const cfg = {
+      enabled: true,
+      max_summary_chars: 2000,
+      debug_log_path: null,
+      reminder_enabled: true,
+      reminder_interval_tokens: 100,
+    }
+    await maybeInjectReminder({ sessionID: sid, output: { system: [] }, messages: bulkyMessages, cfg })
+    const compact = buildCompactTool(clientWith(bulkyMessages), cfg)
+    await compact.execute({
+      from_message_id: "msg01A",
+      to_message_id: "msg01A",
+      summary: "bulky raw output was summarized after its conclusion became durable",
+    }, context())
+    const output = { system: [] as string[] }
+
+    await maybeInjectReminder({ sessionID: sid, output, messages: bulkyMessages, cfg })
+
+    expect(output.system).toHaveLength(0)
   })
 })

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { maybeInjectReminder, estimateVisibleTokens, reminderText } from "../src/reminder"
+import { maybeInjectReminder, estimateVisibleTokens, reminderText, reminderTextWithMessageIDs } from "../src/reminder"
 import { addCompaction, loadState, _clearCache, _setStorageDir } from "../src/state"
 
 const sid = "ses01REMINDER000000000"
@@ -44,11 +44,14 @@ describe("partial compact reminders", () => {
       cfg: { reminder_enabled: true, reminder_interval_tokens: 100 },
     })
 
-    expect(output.system).toEqual([reminderText({ tokenEstimate, model: { limit: { context: 10000 } } })])
+    expect(output.system).toEqual([reminderTextWithMessageIDs({ sessionID: sid, tokenEstimate, messages, model: { limit: { context: 10000 } } })])
     expect(output.system[0]).toContain("built-in auto-compaction is disabled")
-    expect(output.system[0]).toContain("low percentage is not permission")
+    expect(output.system[0]).toContain("Do not compact just because this reminder appeared")
+    expect(output.system[0]).toContain("If there is no safe stale range, continue the task")
     expect(output.system[0]).toContain("large diffs after commit")
     expect(output.system[0]).toContain("partial_compact_instructions")
+    expect(output.system[0]).toContain("Current-session message IDs")
+    expect(output.system[0]).toContain("msg01A, msg01B")
     expect(output.system[0]).not.toContain("<instruction name=\"opencode-partial-compact\">")
     expect(output.system[0]).toContain("% of the context window")
     const state = await loadState(sid)
@@ -85,6 +88,36 @@ describe("partial compact reminders", () => {
     expect(output.system).toHaveLength(0)
   })
 
+  it("omits message IDs hidden by existing compactions from reminders", async () => {
+    await addCompaction(sid, {
+      from_message_id: "msg01A",
+      to_message_id: "msg01B",
+      summary: "old setup and intermediate output were compacted",
+      created_at_iso: "",
+      n_messages_replaced: 2,
+    })
+    const withLaterMessage = [
+      ...messages,
+      {
+        info: { id: "msg01C", sessionID: sid },
+        parts: [{ id: "prt01C", sessionID: sid, messageID: "msg01C", type: "text" as const, text: "x".repeat(9000) }],
+      },
+    ]
+    const output = { system: [] as string[] }
+
+    await maybeInjectReminder({
+      sessionID: sid,
+      model: { limit: { context: 10000 } },
+      output,
+      messages: withLaterMessage,
+      cfg: { reminder_enabled: true, reminder_interval_tokens: 100 },
+    })
+
+    expect(output.system).toHaveLength(1)
+    expect(output.system[0]).toContain("msg01A, msg01C")
+    expect(output.system[0]).not.toContain("msg01B")
+  })
+
   it("waits until another fixed interval has accrued since the stored reminder estimate", async () => {
     const cfg = { reminder_enabled: true, reminder_interval_tokens: 100 }
     await maybeInjectReminder({ sessionID: sid, output: { system: [] }, messages, cfg })
@@ -100,7 +133,7 @@ describe("partial compact reminders", () => {
 
     await maybeInjectReminder({ sessionID: sid, output, messages: bigger, cfg })
 
-    expect(output.system).toEqual([reminderText({ tokenEstimate })])
+    expect(output.system).toEqual([reminderTextWithMessageIDs({ sessionID: sid, tokenEstimate, messages: bigger })])
   })
 
   it("rebaselines reminder cadence after visible context shrinks", async () => {
@@ -123,6 +156,23 @@ describe("partial compact reminders", () => {
     expect(rebaselined).toBeLessThan(highWater)
   })
 
+  it("does not repeat a reminder in the same hook after a shrink rebaseline", async () => {
+    const cfg = { reminder_enabled: true, reminder_interval_tokens: 100 }
+    await maybeInjectReminder({ sessionID: sid, output: { system: [] }, messages, cfg })
+    await addCompaction(sid, {
+      from_message_id: "msg01A",
+      to_message_id: "msg01A",
+      summary: "large output committed and no longer needed verbatim",
+      created_at_iso: "",
+      n_messages_replaced: 1,
+    })
+    const output = { system: [] as string[] }
+
+    await maybeInjectReminder({ sessionID: sid, output, messages, cfg })
+
+    expect(output.system).toHaveLength(0)
+  })
+
   it("clamps the effective interval for models smaller than the configured target", async () => {
     const output = { system: [] as string[] }
     const tokenEstimate = estimateVisibleTokens(messages)
@@ -136,7 +186,7 @@ describe("partial compact reminders", () => {
     })
 
     expect(tokenEstimate).toBeGreaterThanOrEqual(2240)
-    expect(output.system).toEqual([reminderText({ tokenEstimate, model: { limit: { context: 2800 } } })])
+    expect(output.system).toEqual([reminderTextWithMessageIDs({ sessionID: sid, tokenEstimate, messages, model: { limit: { context: 2800 } } })])
   })
 
   it("keeps the configured interval when the model context can support it", async () => {
@@ -158,6 +208,7 @@ describe("partial compact reminders", () => {
 
     expect(text).toContain("estimated visible context: ~1234 tokens")
     expect(text).toContain("after investigation, implementation, verification, review, commit, or push completes")
+    expect(text).toContain("Do not compact just because this reminder appeared")
     expect(text).not.toContain("% of the context window")
   })
 })
