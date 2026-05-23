@@ -7,23 +7,28 @@ the v1 draft and why we cut scope.
 
 ## What the agent can do
 
-One tool:
+Two tools:
 
 ```text
 partial_compact(from_message_id, to_message_id, summary) -> { n_messages_replaced }
+partial_compact(ranges: [{ session_id?, from_message_id, to_message_id, summary }, ...])
+partial_compact_instructions() -> instruction block "opencode-partial-compact"
 ```
 
-Replaces a contiguous range of past messages (inclusive on both ends)
-with a single synthetic text part containing `summary`. Originals stay
-in Opencode's `PartTable` untouched. There is no `pc_peek`,
+`partial_compact` replaces a contiguous range of past messages (inclusive on
+both ends), or multiple disjoint ranges in one batch call, with synthetic text
+parts containing the agent-written summaries. Batch ranges default to the
+current session and may include `session_id` for other verified sessions.
+Originals stay in Opencode's `PartTable` untouched. There is no `pc_peek`,
 `pc_restore`, or `pc_list` in v0.
 
 ## Why this works
 
 - Opencode's `experimental.chat.messages.transform` hook gives plugins
   a mutable reference to the in-memory message array right before it
-  becomes wire format. Empirically verified in Opencode 1.14.46 (POC
-  at [`../experiments/poc/`](../experiments/poc/)).
+  becomes wire format. Originally verified in Opencode 1.14.46 (POC
+  at [`../experiments/poc/`](../experiments/poc/)); current hook names
+  are checked against the installed 1.15.x plugin/SDK types.
 - Opencode already has monotonic `MessageID`s (`msg<26-char base62>`)
   generated in `id/id.ts`. Stable, totally ordered, reusable as turn
   IDs with no extra machinery.
@@ -69,8 +74,17 @@ message list confirms both range endpoints are gone. See
 [`50-persistence.md`](50-persistence.md).
 
 Agents also get a periodic `experimental.chat.system.transform` reminder when
-the estimated visible context grows by roughly one tenth of the model context
-window since the last reminder.
+the estimated visible context grows by `reminder_interval_tokens` since the
+last reminder. Default: 16k tokens. Because this plugin requires native
+auto-compaction to be disabled, the reminder is a mandatory context-management
+prompt: it reports the visible-token estimate, includes context-window percent
+when the model limit is available, and tells the agent to compact stale old
+context more aggressively as the window fills. The 16k setting is the target
+cadence; if a known model context window is smaller than the target, the
+runtime clamps to an internal ~80% safety interval so reminders can still fire
+before exhaustion. Reminders also point to the named
+`opencode-partial-compact` instruction, fetched through
+`partial_compact_instructions`, instead of injecting the full guide every turn.
 
 ## Bun, ESM, public-ready, in this repo
 

@@ -1,19 +1,33 @@
 # opencode-partial-compact
 
 Agent-driven partial context compaction for [Opencode](https://opencode.ai).
-Empirically validated against Opencode 1.14.46.
+Originally validated against Opencode 1.14.46; current local compatibility is
+checked against Opencode CLI 1.15.10 with `@opencode-ai/plugin`/
+`@opencode-ai/sdk` 1.15.10.
 
 ## What it does
 
-Exposes one tool — `partial_compact(from_message_id, to_message_id, summary)` — that lets the
-agent replace a contiguous range of past messages with a short summary it writes.
-The tool description and periodic system reminders nudge the agent to compact
-bulky tool output, resolved detours, and obsolete investigation logs when those
-details no longer need to stay verbatim in context.
+Exposes two tools:
+
+- `partial_compact_instructions()` returns the named instruction block
+  `opencode-partial-compact`. Agents should read it before calling
+  `partial_compact` if it is not already in their context window.
+- `partial_compact(...)` lets the agent replace one contiguous range, or
+  multiple disjoint ranges with `ranges: [{ session_id?, from_message_id,
+  to_message_id, summary }]`, with short summaries it writes. Omitting
+  `session_id` targets the current session; including it allows one batch call
+  to compact verified ranges across multiple sessions.
+
+Periodic reminders tell the agent when the model-visible context has grown
+enough to warrant cleanup. The full tool and reminder contract lives in
+[`docs/20-agent-tools.md`](docs/20-agent-tools.md). Reminders are mandatory
+checkpoints with a short phase-boundary excerpt; read
+`partial_compact_instructions` before compacting unless the named instruction is
+already in context.
+
 It also exposes a TUI slash command, `/partial_compact`, that lets the user pick
-the checkpoint to compact through. The command compacts from the first eligible
-uncompacted message through that checkpoint, then asks the agent to summarize
-that exact range with `partial_compact`.
+the checkpoint to compact through. The command asks the agent to summarize that
+range with `partial_compact` and includes the full instruction block.
 Older local checkouts exposed this agent tool as `pc_compact`; update any saved
 prompts or automation to call `partial_compact` instead.
 The originals remain in Opencode's session log; only the in-memory view sent to
@@ -25,7 +39,8 @@ Add to your `opencode.json`:
 
 ```json
 {
-  "plugin": ["opencode-partial-compact"]
+  "plugin": ["opencode-partial-compact"],
+  "compaction": { "auto": false }
 }
 ```
 
@@ -33,7 +48,8 @@ Or for a local checkout:
 
 ```json
 {
-  "plugin": ["file:///absolute/path/to/dist/index.js"]
+  "plugin": ["file:///absolute/path/to/dist/index.js"],
+  "compaction": { "auto": false }
 }
 ```
 
@@ -66,15 +82,34 @@ Create `.opencode/opencode-partial-compact.jsonc` in your project root, or
   "enabled": true,
   "max_summary_chars": 2000,
   "reminder_enabled": true,
-  "reminder_context_fraction": 0.1,
-  "reminder_min_tokens": 4000,
+  "reminder_interval_tokens": 16000,
   "debug_log_path": null  // set to a file path to enable debug logging
 }
 ```
 
+Native auto-compaction must stay disabled while this plugin is enabled:
+
+```jsonc
+{
+  "compaction": { "auto": false }
+}
+```
+
+Opencode schedules automatic compaction from the previous assistant message's
+recorded token usage before plugins can recompute the partial-compacted
+effective context. This plugin refuses to operate unless `compaction.auto` is
+`false`, avoiding stale-trigger native compactions when the current visible
+context is already small.
+
+`reminder_interval_tokens` is the target reminder cadence. If the active model
+reports a context window smaller than that target, the runtime uses an internal
+safety interval of roughly 80% of the model context window so mandatory
+reminders still appear before the window is exhausted. When the model limit is
+unknown, the configured target is used unchanged.
+
 ## Coexistence
 
-- **Incompatible** with `@tarquinen/opencode-dcp` — plugin will refuse to load
+- **Incompatible** with `@tarquinen/opencode-dcp` — plugin will refuse to operate
   if both are configured.
 - **Order-sensitive** with `oh-my-openagent` — `opencode-partial-compact` must
   appear **before** `oh-my-openagent` in the plugin list.
