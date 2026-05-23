@@ -25,6 +25,7 @@ convention Opencode already manages; DCP uses
   "session_id": "ses01HZQ...",
   "compactions": [
     {
+      "session_id": "ses01HZQ...",
       "from_message_id": "msg01HZQ..3",
       "to_message_id":   "msg01HZQ..7",
       "summary": "Read 12 files (...) — irrelevant.",
@@ -55,7 +56,7 @@ Notes:
 |---|---|
 | Plugin `server()` init | Note storage dir; lazy per-session load. |
 | First time we see a `sessionID` in the hook | Try to read sidecar; absent → empty in-memory state for this session. |
-| `partial_compact` tool succeeds | Append record to in-memory state; write file (atomic). |
+| `partial_compact` tool succeeds | Append record(s) to in-memory state; write once per target session (atomic per sidecar). |
 | Subsequent hook fires | Read in-memory state (no disk hit); collapse view. |
 | Reminder threshold reached | Store the last reminder message ID and visible-token estimate. |
 | Native Opencode compaction starts | No prompt injection; native compaction sees the transformed message view. |

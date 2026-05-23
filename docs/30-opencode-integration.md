@@ -16,7 +16,8 @@ opencode-partial-compact/
     plugin.ts         # server() body
     hook.ts           # messages.transform handler
     reminder.ts       # system reminder cadence + visible-token estimate
-    tool.ts           # partial_compact tool definition
+    tool.ts           # partial_compact + instruction tool definitions
+    instructions.ts   # canonical agent instruction block
     tui.ts            # /partial_compact TUI command
     tui-checkpoints.ts# checkpoint picker + one-shot agent prompt
     state.ts          # sidecar persistence
@@ -44,7 +45,7 @@ export default mod
 
 ```ts
 {
-  tool: { partial_compact: ... },
+  tool: { partial_compact: ..., partial_compact_instructions: ... },
   "experimental.chat.messages.transform": handler,
   "experimental.chat.system.transform": reminderHandler,
 }
@@ -91,10 +92,17 @@ we error out if the plugin order is wrong.
 
 ## Hooks we consume
 
-- `Hooks.tool` — register `partial_compact`.
+- `Hooks.tool` — register `partial_compact` and the read-only
+  `partial_compact_instructions` guide tool.
 - `experimental.chat.messages.transform` — rewrite the view.
-- `experimental.chat.system.transform` — occasionally remind the agent
-  to consider partial compaction after visible context grows.
+- `experimental.chat.system.transform` — inject a mandatory partial-compaction
+  reminder after visible context grows. The reminder reports the estimated
+  visible context size, includes context-window percentage when available, and
+  includes a phase-boundary excerpt plus the named-instruction pointer so agents
+  compact stale bulky context even below 50% after durable conclusions are
+  captured. `reminder_interval_tokens` remains the configured target cadence;
+  when a known model context window is smaller than that target, the runtime
+  clamps the effective interval to an internal ~80% safety point.
 
 We do NOT consume `experimental.session.compacting`,
 `experimental.compaction.autocontinue`, or `chat.params`.
@@ -103,9 +111,11 @@ We do NOT consume `experimental.session.compacting`,
 
 ```ts
 async execute(args, ctx) {
-  validateRange(args, ctx.sessionID)         // pure
-  const record = { from, to, summary, ... }
-  await state.add(ctx.sessionID, record)     // persistence
+  normalize legacy single range or ranges[]
+  group by target session_id (default ctx.sessionID)
+  validateRanges(group, messages, records)  // pure, all before writes
+  const records = ranges.map(({ from, to, summary, ... }) => ...)
+  await state.addCompactions(sessionID, records) // one write per target session
   return { n_messages_replaced, truncated }
 }
 ```
@@ -125,8 +135,7 @@ Project-local `.opencode/opencode-partial-compact.jsonc` or user-global
   "enabled": true,
   "max_summary_chars": 2000,
   "reminder_enabled": true,
-  "reminder_context_fraction": 0.1,
-  "reminder_min_tokens": 4000,
+  "reminder_interval_tokens": 16000,
   "debug_log_path": null
 }
 ```
@@ -141,5 +150,9 @@ all dropped per v0 scope or hardened to errors.
   already-recorded number, but both normal prompting and native compaction pass
   through `experimental.chat.messages.transform`, so subsequent model-visible
   context and native compaction inputs use the partial-compacted view.
-- `/compact` and automatic native compaction remain Opencode-owned. We do not
-  inject partial summaries into their prompts.
+- Therefore this plugin requires Opencode `compaction.auto=false`. It refuses to
+  operate when native auto-compaction is enabled, because the native trigger can
+  fire before plugins can recompute the partial-compacted effective context.
+- Manual `/compact` remains Opencode-owned. Automatic native compaction must be
+  disabled with `compaction.auto=false`. We do not inject partial summaries into
+  native compaction prompts.

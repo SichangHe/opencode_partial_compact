@@ -10,11 +10,10 @@ Compaction range puts a `tool_use` part in the last included message
 without its `tool_result` (in the immediately following message), or
 vice versa across the start boundary.
 
-**v0 handling.** `partial_compact` validates and returns an error:
-`"range splits a tool_use/tool_result pair at msg... — extend the range
-to msg... or trim to msg..."`. The agent retries with corrected
-bounds. Auto-expansion is rejected because it can silently swallow
-assistant reasoning (Opus critique C7).
+**v0 handling.** `partial_compact` validates and returns a targeted error
+telling the agent whether to extend or trim the range to include the partner
+message. The agent retries with corrected bounds. Auto-expansion is rejected
+because it can silently swallow assistant reasoning (Opus critique C7).
 
 **Safety net.** oh-my-openagent's `toolPairValidator` runs after us
 and repairs orphans if our validation ever misses one (e.g., bug).
@@ -53,13 +52,16 @@ rename bad file to `{sessionId}.json.bad-{epoch}`, treat in-memory
 state as empty for that session. Version skew → refuse to operate on
 that sidecar with a clear error.
 
-## F6. Reference to message ID not in this session
+## F6. Reference to message ID not in target session
 
-Agent passes a foreign or already-deleted ID.
+Agent passes an ID that does not exist in the target session. In batch mode,
+the target session is `ranges[].session_id` when present, otherwise the current
+session.
 
-**v0 handling.** Validate-time SQLite lookup via the plugin SDK
-client. Not found → tool error `"message msg... not found in this
-session"`. No state change.
+**v0 handling.** The tool fetches messages for the target session through the
+plugin SDK client and validates against that list. Not found → tool error
+`"message msg... not found in this session"` for that target session. No state
+change.
 
 ## F7. Compaction empties visible context
 
@@ -84,23 +86,25 @@ partial view.
 
 ## F9. Plugin ordering wrong (oh-my-openagent before us)
 
-**v0 handling.** Refuse to operate on first chat/native-compaction hook use with a clear error
+**v0 handling.** Refuse to operate on first chat hook use with a clear error
 naming the required order. See `60-coexistence.md`.
 
 ## F10. DCP also configured
 
-**v0 handling.** Refuse to operate on first chat/native-compaction hook use. See
+**v0 handling.** Refuse to operate on first chat hook use. See
 `60-coexistence.md`.
 
 ## F11. SDK version skew
 
-POC ran against Opencode 1.14.46. The packaged plugin targets
-`@opencode-ai/plugin` and `@opencode-ai/sdk` `>=1.15.0`, which provide the TUI
-plugin types and `experimental.chat.system.transform` hook used by this checkout.
+POC ran against Opencode 1.14.46. Current local compatibility is checked against
+Opencode CLI 1.15.10 with `@opencode-ai/plugin` and `@opencode-ai/sdk` 1.15.10.
+The packaged plugin targets `@opencode-ai/plugin` and `@opencode-ai/sdk`
+`>=1.15.0`, which provide the TUI plugin types and
+`experimental.chat.system.transform` hook used by this checkout.
 
 **v0 handling.** Pin `peerDependencies: ">=1.15.0"`. Track Opencode releases
-manually until a CI hookup. Document the empirically-validated Opencode version
-in README.
+manually until a CI hookup. Document the current checked Opencode CLI and SDK
+versions in README.
 
 ## F12. Summary too long
 
@@ -114,7 +118,8 @@ in the tool result.
 
 - Multi-host shared storage.
 - Encryption at rest.
-- Cross-session compactions.
+- Cross-session ranges in one tool call are supported, but each range still
+  compacts one target session's sidecar independently.
 - Concurrent Opencode processes on the same session (single-process
   assumed; sidecar atomic rename is best-effort if used).
 - Reward-hacking eval (OQ-11). Future evaluation work.
