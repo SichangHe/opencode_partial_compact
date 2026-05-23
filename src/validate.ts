@@ -10,6 +10,7 @@ export type WithParts = {
 }
 
 export type CompactionRecord = {
+  session_id?: string
   from_message_id: string
   to_message_id: string
   summary: string
@@ -20,9 +21,24 @@ export type CompactionRecord = {
 /** Pure range-validation errors. */
 export type ValidationError =
   | { kind: "not_found"; id: string }
+  | { kind: "invalid_order"; from_message_id: string; to_message_id: string }
   | { kind: "overlaps"; from_message_id: string }
+  | { kind: "overlaps_new"; from_message_id: string }
   | { kind: "prior_compaction" }
-  | { kind: "tool_pair_split"; at: string; extend_to?: string; trim_to?: string }
+  | { kind: "tool_pair_split"; at: string; extend_to?: string; extend_from?: string; start_after?: string }
+
+export type CompactionRangeInput = {
+  session_id?: string | undefined
+  from_message_id: string
+  to_message_id: string
+  summary: string
+}
+
+export type ValidatedCompactionRange = CompactionRangeInput & {
+  from_index: number
+  to_index: number
+  n_messages_replaced: number
+}
 
 /**
  * Return true if the message has any ToolPart in an incomplete (pending/running) state.
@@ -64,8 +80,7 @@ export function validateRange(
   if (toIdx === -1) return { kind: "not_found", id: to_message_id }
 
   if (fromIdx > toIdx) {
-    // from must not be after to — treat as bad from_message_id
-    return { kind: "not_found", id: from_message_id }
+    return { kind: "invalid_order", from_message_id, to_message_id }
   }
 
   const lo = fromIdx
@@ -119,9 +134,47 @@ export function validateRange(
     return {
       kind: "tool_pair_split",
       at: firstInRange.info.id,
-      trim_to: beforeRange.info.id,
+      extend_from: beforeRange.info.id,
+      start_after: firstInRange.info.id,
     }
   }
 
   return null
+}
+
+export function validateRanges(
+  ranges: CompactionRangeInput[],
+  messages: WithParts[],
+  records: CompactionRecord[],
+): { ranges: ValidatedCompactionRange[]; error: ValidationError | null } {
+  const validated: ValidatedCompactionRange[] = []
+
+  for (const range of ranges) {
+    const err = validateRange(range.from_message_id, range.to_message_id, messages, records)
+    if (err) return { ranges: [], error: err }
+
+    const fromIdx = messages.findIndex(m => m.info.id === range.from_message_id)
+    const toIdx = messages.findIndex(m => m.info.id === range.to_message_id)
+    if (fromIdx === -1) return { ranges: [], error: { kind: "not_found", id: range.from_message_id } }
+    if (toIdx === -1) return { ranges: [], error: { kind: "not_found", id: range.to_message_id } }
+
+    const lo = Math.min(fromIdx, toIdx)
+    const hi = Math.max(fromIdx, toIdx)
+    for (const prior of validated) {
+      const priorLo = Math.min(prior.from_index, prior.to_index)
+      const priorHi = Math.max(prior.from_index, prior.to_index)
+      if (lo <= priorHi && hi >= priorLo) {
+        return { ranges: [], error: { kind: "overlaps_new", from_message_id: prior.from_message_id } }
+      }
+    }
+
+    validated.push({
+      ...range,
+      from_index: fromIdx,
+      to_index: toIdx,
+      n_messages_replaced: hi - lo + 1,
+    })
+  }
+
+  return { ranges: validated, error: null }
 }

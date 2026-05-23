@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test"
-import { validateRange } from "../src/validate"
+import { validateRange, validateRanges } from "../src/validate"
 import type { WithParts, CompactionRecord } from "../src/validate"
 
 const SID = "ses01TEST000000000000000"
@@ -73,10 +73,12 @@ describe("validateRange", () => {
     expect((err as { id: string }).id).toBe("msg_UNKNOWN")
   })
 
-  it("not_found when from is after to", () => {
+  it("invalid_order when from is after to", () => {
     const msgs = [makeMsg(MSG1), makeMsg(MSG2)]
     const err = validateRange(MSG2, MSG1, msgs, [])
-    expect(err?.kind).toBe("not_found")
+    expect(err?.kind).toBe("invalid_order")
+    expect((err as { from_message_id: string }).from_message_id).toBe(MSG2)
+    expect((err as { to_message_id: string }).to_message_id).toBe(MSG1)
   })
 
   it("overlaps when range intersects existing compaction record", () => {
@@ -118,7 +120,8 @@ describe("validateRange", () => {
     const err = validateRange(MSG2, MSG3, msgs, [])
     expect(err?.kind).toBe("tool_pair_split")
     expect((err as { at: string }).at).toBe(MSG2)
-    expect((err as { trim_to?: string }).trim_to).toBe(MSG1)
+    expect((err as { extend_from?: string }).extend_from).toBe(MSG1)
+    expect((err as { start_after?: string }).start_after).toBe(MSG2)
   })
 
   it("no overlap when records are disjoint", () => {
@@ -136,5 +139,38 @@ describe("validateRange", () => {
       { from_message_id: MSG1, to_message_id: MSG2, summary: "x", created_at_iso: "" },
     ]
     expect(validateRange(MSG3, MSG4, msgs, records)).toBeNull()
+  })
+})
+
+describe("validateRanges", () => {
+  it("accepts multiple disjoint ranges", () => {
+    const msgs = [makeMsg(MSG1), makeMsg(MSG2), makeMsg(MSG3), makeMsg(MSG4)]
+    const result = validateRanges([
+      { from_message_id: MSG1, to_message_id: MSG1, summary: "one" },
+      { from_message_id: MSG3, to_message_id: MSG4, summary: "two" },
+    ], msgs, [])
+
+    expect(result.error).toBeNull()
+    expect(result.ranges).toHaveLength(2)
+    expect(result.ranges[1]?.n_messages_replaced).toBe(2)
+  })
+
+  it("rejects ranges that overlap each other", () => {
+    const msgs = [makeMsg(MSG1), makeMsg(MSG2), makeMsg(MSG3)]
+    const result = validateRanges([
+      { from_message_id: MSG1, to_message_id: MSG2, summary: "one" },
+      { from_message_id: MSG2, to_message_id: MSG3, summary: "two" },
+    ], msgs, [])
+
+    expect(result.error?.kind).toBe("overlaps_new")
+  })
+
+  it("rejects any range that overlaps an active record", () => {
+    const msgs = [makeMsg(MSG1), makeMsg(MSG2), makeMsg(MSG3), makeMsg(MSG4)]
+    const result = validateRanges([
+      { from_message_id: MSG3, to_message_id: MSG4, summary: "new" },
+    ], msgs, [{ from_message_id: MSG2, to_message_id: MSG3, summary: "old", created_at_iso: "" }])
+
+    expect(result.error?.kind).toBe("overlaps")
   })
 })
