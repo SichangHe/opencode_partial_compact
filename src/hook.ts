@@ -22,7 +22,8 @@ export type ApplyCompactionsResult = {
  * Byte-stable: depends only on the record fields, never on timestamps or random data.
  */
 export function syntheticText(rec: CompactionRecord): string {
-  return `[compacted: ${rec.from_message_id}..${rec.to_message_id} — ${rec.summary}]`
+  const session = rec.session_id ? `session ${rec.session_id}: ` : ""
+  return `[compacted: ${session}${rec.from_message_id}..${rec.to_message_id} — ${rec.summary}]`
 }
 
 /**

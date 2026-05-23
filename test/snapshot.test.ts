@@ -66,6 +66,7 @@ function makeMessages() {
 }
 
 const RECORD: CompactionRecord = {
+  session_id: SESSION_ID,
   from_message_id: MSG_A,
   to_message_id: MSG_B,
   summary: "Read files A and B — neither relevant.",
@@ -77,7 +78,7 @@ const RECORD: CompactionRecord = {
 // ---------------------------------------------------------------------------
 
 const EXPECTED_SYNTHETIC_TEXT =
-  `[compacted: ${MSG_A}..${MSG_B} — Read files A and B — neither relevant.]`
+  `[compacted: session ${SESSION_ID}: ${MSG_A}..${MSG_B} — Read files A and B — neither relevant.]`
 
 const EXPECTED_PART_ID = `pc_${MSG_A}`
 
