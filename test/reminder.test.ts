@@ -45,10 +45,7 @@ describe("partial compact reminders", () => {
     })
 
     expect(output.system).toEqual([reminderTextWithMessageIDs({ sessionID: sid, tokenEstimate, messages, model: { limit: { context: 10000 } } })])
-    expect(output.system[0]).toContain("built-in auto-compaction is disabled")
-    expect(output.system[0]).toContain("Do not compact just because this reminder appeared")
-    expect(output.system[0]).toContain("If there is no safe stale range, continue the task")
-    expect(output.system[0]).toContain("large diffs after commit")
+    expect(output.system[0]).toContain("Consider partial compaction for stale bulky context")
     expect(output.system[0]).toContain("partial_compact_instructions")
     expect(output.system[0]).toContain("Current-session message IDs")
     expect(output.system[0]).toContain("msg01A, msg01B")
@@ -207,8 +204,7 @@ describe("partial compact reminders", () => {
     const text = reminderText({ tokenEstimate: 1234 })
 
     expect(text).toContain("estimated visible context: ~1234 tokens")
-    expect(text).toContain("after investigation, implementation, verification, review, commit, or push completes")
-    expect(text).toContain("Do not compact just because this reminder appeared")
+    expect(text).toContain("call `partial_compact_instructions` first")
     expect(text).not.toContain("% of the context window")
   })
 })

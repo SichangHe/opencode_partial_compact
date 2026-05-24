@@ -2,7 +2,6 @@ import type { Part } from "@opencode-ai/sdk"
 import { applyCompactions } from "./hook.js"
 import { debugLog } from "./log.js"
 import { loadState, recordReminder } from "./state.js"
-import { partialCompactInstructionPointer, partialCompactReminderExcerpt } from "./instructions.js"
 import { loadPrompt, renderPrompt } from "./prompt-loader.js"
 import { currentSessionMessageIDReference } from "./message-ids.js"
 
@@ -69,9 +68,6 @@ function effectiveReminderInterval(configuredInterval: number, model: ModelLike 
 export function reminderText(input: { tokenEstimate: number; model?: ModelLike }): string {
   return renderPrompt(loadPrompt("partial-compact-reminder.md"), {
     CONTEXT_STATUS: pctText(input.tokenEstimate, input.model),
-    REMINDER_EXCERPT: partialCompactReminderExcerpt(),
-    INSTRUCTION_POINTER: partialCompactInstructionPointer(),
-    INSTRUCTION_NAME: "opencode-partial-compact",
   }).replace(/\n+/g, " ")
 }
 
