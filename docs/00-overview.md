@@ -10,7 +10,6 @@ the v1 draft and why we cut scope.
 Two tools:
 
 ```text
-partial_compact(from_message_id, to_message_id, summary) -> { n_messages_replaced }
 partial_compact(ranges: [{ session_id?, from_message_id, to_message_id, summary }, ...])
 partial_compact_instructions() -> instruction block "opencode-partial-compact"
 ```
