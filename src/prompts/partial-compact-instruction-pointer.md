@@ -1,1 +1,1 @@
-Before calling `partial_compact`, read instruction `{{INSTRUCTION_NAME}}` via `partial_compact_instructions` if that instruction block is not already in your context window.
+Use `partial_compact_instructions` before `partial_compact` unless the full partial-compaction instruction block is already in context.
