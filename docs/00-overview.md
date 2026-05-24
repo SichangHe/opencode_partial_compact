@@ -64,12 +64,13 @@ State is a JSON sidecar at
 The hook rewrites only the model-visible in-memory view; the SQLite log remains
 untouched.
 
-Native Opencode compaction is fail-closed while this plugin is enabled:
-`compaction.auto=false` is enforced in the merged config and
-`experimental.session.compacting` rejects the native compaction path. We do not
-append partial summaries to full-compaction prompts. If an older/stale session
-already contains native compaction parts, stale sidecar records are pruned only
-after the full session message list confirms both range endpoints are gone. See
+Native Opencode auto-compaction is disabled while this plugin is enabled:
+`compaction.auto=false` is enforced in the merged config. If Opencode still
+reaches `experimental.session.compacting` near overflow, the plugin allows that
+native fallback so the session compacts rather than stops. We do not append
+partial summaries to full-compaction prompts. If a session contains native
+compaction parts, stale sidecar records are pruned only after the full session
+message list confirms both range endpoints are gone. See
 [`50-persistence.md`](50-persistence.md).
 
 Agents also get a periodic `experimental.chat.system.transform` reminder when

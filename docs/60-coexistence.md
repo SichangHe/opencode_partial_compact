@@ -81,15 +81,24 @@ own marker: range validation rejects any range containing a prior
 
 ## With Opencode's own `/compact`
 
-Native `/compact` is blocked while this plugin is enabled. Automatic native
-compaction is disabled with `compaction.auto=false` by the plugin config hook,
-and `experimental.session.compacting` fails closed if Opencode reaches the
-native compaction path anyway. The `experimental.compaction.autocontinue` hook
-also disables synthetic continuation after any native compaction that escaped the
-primary guard. If a native compaction part is later present, our transform hook
-still skips affected sidecar records and prunes a sidecar record only after the
-full session message list confirms both endpoints are absent.
-Future v0.1 may expose a slash-command status to inform the user.
+Automatic native compaction is disabled with `compaction.auto=false` by the
+plugin config hook. Opencode schedules automatic compaction from the previous
+assistant token record before this plugin can recompute the partial-compacted
+effective context, so the plugin keeps native auto-compaction off to avoid
+stale-trigger compactions.
+
+If Opencode still reaches `experimental.session.compacting`, the plugin allows
+that native fallback to proceed. This is a last-resort safety valve for
+high-context overflow: targeted `partial_compact` remains preferred, but a
+session near the model limit must recover by compacting rather than stop because
+the plugin threw from the native compaction hook. The
+`experimental.compaction.autocontinue` hook keeps continuation enabled when
+OpenCode reports overflow, and disables synthetic continuation for non-overflow
+native compactions that escaped the primary guard. If a native compaction part is
+later present, our transform hook still skips affected sidecar records and prunes
+a sidecar record only after the full session message list confirms both
+endpoints are absent. Future v0.1 may expose a slash-command status to inform
+the user.
 
 ## With sub-agents (oh-my-openagent's `call_omo_agent`)
 

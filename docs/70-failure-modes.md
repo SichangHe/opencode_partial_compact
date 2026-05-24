@@ -114,6 +114,20 @@ Agent emits a 50K-token summary that defeats the purpose.
 2000). Truncate with `[...truncated...]` and report `truncated: true`
 in the tool result.
 
+## F13. High-context overflow reaches native compaction
+
+Opencode can still reach `experimental.session.compacting` near overflow even
+when native auto-compaction is disabled. Blocking that hook makes the session
+stop near the model limit with no safe recovery path.
+
+**v0 handling.** Allow native compaction as a last-resort fallback. The plugin
+continues to set `compaction.auto=false` and inject partial-compaction reminders
+so targeted `partial_compact` is the normal path. If overflow still reaches the
+native hook, compaction proceeds rather than throwing and synthetic continuation
+stays enabled for that overflow recovery. Existing F8 handling keeps sidecar
+state safe after native compaction by skipping/pruning records whose message
+endpoints disappeared from the native-compacted view.
+
 ## Things explicitly out of scope for v0
 
 - Multi-host shared storage.

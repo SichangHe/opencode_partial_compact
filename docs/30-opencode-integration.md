@@ -82,8 +82,8 @@ Native Opencode compaction guard:
 
 ```text
 Opencode native compaction starts
-  experimental.session.compacting             (us — fail closed)
-  experimental.compaction.autocontinue        (us — disable continuation if escaped)
+  experimental.session.compacting             (us — allow fallback)
+  experimental.compaction.autocontinue        (us — continue only after overflow fallback)
   later messages.transform sees native compaction parts only for older/escaped sessions
     [opencode-partial-compact]                (safely prune stale sidecar records)
 ```
@@ -111,9 +111,10 @@ we error out if the plugin order is wrong.
   view immediately instead of waiting for the next system hook to notice the
   shrink.
 
-We use `experimental.session.compacting` and
-`experimental.compaction.autocontinue` as fail-closed guards for native
-compaction. We do NOT consume `chat.params`.
+We use `experimental.session.compacting` as a last-resort native overflow
+fallback and `experimental.compaction.autocontinue` to keep synthetic
+continuation enabled only after overflow fallback. We do NOT consume
+`chat.params`.
 
 ## Tool execute path
 
@@ -156,12 +157,13 @@ all dropped per v0 scope or hardened to errors.
 - Opencode's current auto-compaction trigger can still be based on the previous
   assistant message's recorded token usage. The plugin cannot rewrite that
   already-recorded number, so it disables native auto-compaction before the
-  scheduler runs and fails closed if a native compaction path still starts.
+  scheduler runs. If a native compaction path still starts near overflow, the
+  plugin allows it as a last-resort recovery fallback.
 - Therefore this plugin enforces Opencode `compaction.auto=false` through the
   merged-config hook and keeps a lazy fail-safe check. Native triggers can fire
   before chat transforms recompute the partial-compacted effective context, so
   runtime config enforcement is the primary guard.
-- Native `/compact` is refused while this plugin is enabled. Automatic native
-  compaction is disabled with `compaction.auto=false` by the plugin config hook,
-  and the compaction hooks fail closed if Opencode reaches that path anyway. We
+- Automatic native compaction is disabled with `compaction.auto=false` by the
+  plugin config hook. `experimental.session.compacting` is allowed to proceed as
+  an overflow fallback so high-context sessions compact instead of stopping. We
   do not inject partial summaries into native compaction prompts.

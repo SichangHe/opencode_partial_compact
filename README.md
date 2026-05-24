@@ -98,7 +98,7 @@ Native auto-compaction must stay disabled while this plugin is enabled. The plug
 
 Opencode schedules automatic compaction from the previous assistant message's
 recorded token usage before plugins can recompute the partial-compacted
-effective context. This plugin sets `compaction.auto=false` through Opencode's config hook and also keeps a lazy fail-safe check, avoiding stale-trigger native compactions when the current visible context is already small.
+effective context. This plugin sets `compaction.auto=false` through Opencode's config hook and keeps a lazy fail-safe check, avoiding stale-trigger native compactions when the current visible context is already small. If Opencode still reaches the native compaction path near overflow, the plugin lets that native fallback run instead of throwing; partial compaction remains the preferred proactive path, but high-context sessions should recover rather than stop silently.
 
 `reminder_interval_tokens` is the target reminder cadence. If the active model
 reports a context window smaller than that target, the runtime uses an internal
