@@ -58,8 +58,8 @@ describe("partial compact TUI checkpoints", () => {
 
     expect(prompt).toContain("from_message_id: msg01")
     expect(prompt).toContain("to_message_id: msg03")
-    expect(prompt).toContain("call partial_compact once")
+    expect(prompt).toContain("call `partial_compact` with one `ranges` item")
     expect(prompt).toContain("<instruction name=\"opencode-partial-compact\">")
-    expect(prompt).toContain("use one batch call with ranges")
+    expect(prompt).toContain("additional items in the same `ranges` call")
   })
 })

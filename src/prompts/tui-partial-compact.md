@@ -1,10 +1,10 @@
-Manual partial compaction requested from the TUI.
-
 {{INSTRUCTION_BLOCK}}
 
-Range:
+The user selected one partial-compaction checkpoint. This slash command is not automatic and does not open a multi-range picker; it gives you one exact range to summarize now.
+
+Selected range:
 - from_message_id: {{FROM_MESSAGE_ID}}
 - to_message_id: {{TO_MESSAGE_ID}}
-- selected checkpoint: {{CHECKPOINT_TITLE}}
+- checkpoint: {{CHECKPOINT_TITLE}}
 
-Write a concise replacement summary for exactly this contiguous range, then call partial_compact once with those exact message IDs and your summary. If you identify additional disjoint stale ranges while following the instruction, use one batch call with ranges instead of repeated partial_compact calls. Preserve only facts needed later: decisions, file paths, tool outputs, errors, assumptions, outcomes, and session IDs. Do not ask follow-up questions. After the tool succeeds, report the result briefly.
+Write a concise replacement summary for exactly this selected range, then call `partial_compact` with one `ranges` item using these exact message IDs. If you independently identify additional disjoint stale ranges while following the instruction, include them as additional items in the same `ranges` call.
