@@ -100,9 +100,8 @@ we error out if the plugin order is wrong.
 - `experimental.chat.system.transform` — inject a mandatory partial-compaction
   reminder after visible context grows. The reminder reports the estimated
   visible context size, includes context-window percentage when available, and
-  includes a phase-boundary excerpt plus the named-instruction pointer so agents
-  compact stale bulky context even below 50% after durable conclusions are
-  captured. It also appends ordered current-session `msg...` IDs after existing
+  points to the named instruction so agents can review the full compaction
+  policy before choosing ranges. It also appends ordered current-session `msg...` IDs after existing
   partial compactions are applied. `reminder_interval_tokens` remains the
   configured target cadence; when a known model context window is smaller than
   that target, the runtime clamps the effective interval to an internal ~80%
@@ -120,7 +119,7 @@ compaction. We do NOT consume `chat.params`.
 
 ```ts
 async execute(args, ctx) {
-  normalize legacy single range or ranges[]
+  normalize ranges[]
   group by target session_id (default ctx.sessionID)
   validateRanges(group, messages, records)  // pure, all before writes
   const records = ranges.map(({ from, to, summary, ... }) => ...)

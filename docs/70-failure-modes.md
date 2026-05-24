@@ -54,7 +54,7 @@ that sidecar with a clear error.
 
 ## F6. Reference to message ID not in target session
 
-Agent passes an ID that does not exist in the target session. In batch mode,
+Agent passes an ID that does not exist in the target session. For `ranges`,
 the target session is `ranges[].session_id` when present, otherwise the current
 session.
 
