@@ -1,11 +1,11 @@
 import { describe, expect, it } from "bun:test"
 import {
-  blockNativeCompaction,
+  allowNativeCompactionFallback,
   disableNativeAutoCompaction,
   disableNativeAutoCompactionWhenEnabled,
   disableNativeCompactionAutocontinue,
-  NATIVE_COMPACTION_DISABLED_ERROR,
   makeCoexistenceCheck,
+  nativeCompactionFallbackHook,
   normalizePluginConfig,
 } from "../src/plugin"
 
@@ -52,15 +52,32 @@ describe("plugin config guard", () => {
     expect(data.compaction).toEqual({ auto: false })
   })
 
-  it("fails closed when native compaction starts", async () => {
-    await expect(blockNativeCompaction({ sessionID: "ses_native" }))
-      .rejects.toThrow(NATIVE_COMPACTION_DISABLED_ERROR)
+  it("allows native compaction as a last-resort fallback", async () => {
+    await expect(allowNativeCompactionFallback({ sessionID: "ses_native" }))
+      .resolves.toBeUndefined()
   })
 
-  it("disables native compaction auto-continue", () => {
+  it("allows native compaction through the registered hook after config verification", async () => {
+    const hook = nativeCompactionFallbackHook(makeCoexistenceCheck(client({
+      plugin: ["opencode-partial-compact"],
+      compaction: { auto: false },
+    })))
+
+    await expect(hook({ sessionID: "ses_native" })).resolves.toBeUndefined()
+  })
+
+  it("keeps native compaction auto-continue enabled after overflow fallback", () => {
     const output = { enabled: true }
 
     disableNativeCompactionAutocontinue({ sessionID: "ses_native", overflow: true }, output)
+
+    expect(output.enabled).toBe(true)
+  })
+
+  it("disables native compaction auto-continue for non-overflow compaction", () => {
+    const output = { enabled: true }
+
+    disableNativeCompactionAutocontinue({ sessionID: "ses_native", overflow: false }, output)
 
     expect(output.enabled).toBe(false)
   })

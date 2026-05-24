@@ -57,8 +57,8 @@ export function normalizePluginConfig(parsed: RawPluginConfig): PluginConfig {
 /**
  * Disable Opencode's native auto-compaction in the merged runtime config.
  *
- * The lazy hook guard below is still useful as a fail-closed check, but it runs
- * too late to be the primary protection: Opencode decides whether to schedule
+ * The lazy config check below is still useful as a fail-safe, but it runs too
+ * late to be the primary protection: Opencode decides whether to schedule
  * native overflow compaction from the live config during session prompting.
  * Mutating the config hook's merged object keeps that scheduler off even when a
  * user-level or project-level config forgot to set `compaction.auto=false`.
@@ -72,19 +72,25 @@ export function disableNativeAutoCompactionWhenEnabled(configData: ConfigData, c
   disableNativeAutoCompaction(configData)
 }
 
-export const NATIVE_COMPACTION_DISABLED_ERROR =
-  "opencode-partial-compact: native Opencode compaction is disabled while this plugin is enabled; " +
-  "use partial_compact for targeted context cleanup instead."
+export async function allowNativeCompactionFallback(input: { sessionID: string }): Promise<void> {
+  debugLog(`Allowing native compaction fallback for session=${input.sessionID}`)
+}
 
-export async function blockNativeCompaction(input: { sessionID: string }): Promise<void> {
-  debugLog(`Blocked native compaction for session=${input.sessionID}`)
-  throw new Error(NATIVE_COMPACTION_DISABLED_ERROR)
+export function nativeCompactionFallbackHook(coexistenceCheck: () => Promise<void>) {
+  return async (input: { sessionID: string }): Promise<void> => {
+    await coexistenceCheck()
+    await allowNativeCompactionFallback(input)
+  }
 }
 
 export function disableNativeCompactionAutocontinue(
   input: { sessionID: string; overflow: boolean },
   output: { enabled: boolean },
 ): void {
+  if (input.overflow) {
+    debugLog(`Kept native compaction auto-continue enabled for overflow fallback session=${input.sessionID}`)
+    return
+  }
   output.enabled = false
   debugLog(`Disabled native compaction auto-continue for session=${input.sessionID} overflow=${input.overflow}`)
 }
@@ -238,10 +244,7 @@ export const server: Plugin = async (ctx) => {
     "experimental.chat.messages.transform": wrappedHook,
     "experimental.chat.system.transform": wrappedSystemHook,
     "experimental.session.compacting": cfg.enabled
-      ? async (input) => {
-          await coexistenceCheck()
-          await blockNativeCompaction(input)
-        }
+      ? nativeCompactionFallbackHook(coexistenceCheck)
       : async () => { /* no-op when disabled */ },
     "experimental.compaction.autocontinue": cfg.enabled
       ? async (input, output) => {
