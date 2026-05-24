@@ -130,27 +130,12 @@ export function buildCompactTool(
   client: CompactToolClient,
   cfg: PluginConfig,
 ) {
-  const maxSummaryChars = String(cfg.max_summary_chars)
   return tool({
     description:
       renderPrompt(loadPrompt("partial-compact-tool-description.md"), {
         INSTRUCTION_POINTER: partialCompactInstructionPointer(),
       }),
     args: {
-      from_message_id: tool.schema
-        .string()
-        .optional()
-        .describe(loadPrompt("partial-compact-arg-from-message-id.md")),
-      to_message_id: tool.schema
-        .string()
-        .optional()
-        .describe(loadPrompt("partial-compact-arg-to-message-id.md")),
-      summary: tool.schema
-        .string()
-        .optional()
-        .describe(
-          renderPrompt(loadPrompt("partial-compact-arg-summary.md"), { MAX_SUMMARY_CHARS: maxSummaryChars }),
-        ),
       ranges: tool.schema
         .array(tool.schema.object({
           session_id: tool.schema.string().optional().describe(loadPrompt("partial-compact-range-session-id.md")),
@@ -158,7 +143,6 @@ export function buildCompactTool(
           to_message_id: tool.schema.string().describe(loadPrompt("partial-compact-range-to-message-id.md")),
           summary: tool.schema.string().describe(loadPrompt("partial-compact-range-summary.md")),
         }))
-        .optional()
         .describe(
           loadPrompt("partial-compact-arg-ranges.md"),
         ),
@@ -170,32 +154,17 @@ export function buildCompactTool(
       }
 
       const sessionID = ctx.sessionID
-      const batchRanges = args.ranges?.filter(range =>
+      const requestedRanges: CompactionRangeInput[] = args.ranges?.filter(range =>
         nonEmptyString(range.from_message_id) || nonEmptyString(range.to_message_id) || nonEmptyString(range.summary) || nonEmptyString(range.session_id),
       ) ?? []
-      const hasRanges = batchRanges.length > 0
-      const hasLegacy = nonEmptyString(args.from_message_id) || nonEmptyString(args.to_message_id) || nonEmptyString(args.summary)
-      if (hasRanges && hasLegacy) {
-        return JSON.stringify({ error: "do not mix ranges with from_message_id/to_message_id/summary" })
+      if (requestedRanges.length === 0) {
+        return JSON.stringify({ error: "provide ranges with at least one complete range" })
       }
-
-      const legacyMode = !hasRanges
-      let requestedRanges: CompactionRangeInput[]
-      if (hasRanges) {
-        const missingSummary = batchRanges.some(range => !nonEmptyString(range.summary))
-        if (missingSummary) {
-          return JSON.stringify({ error: "each range must include from_message_id, to_message_id, and summary" })
-        }
-        requestedRanges = batchRanges
-      } else {
-        if (!nonEmptyString(args.from_message_id) || !nonEmptyString(args.to_message_id) || !nonEmptyString(args.summary)) {
-          return JSON.stringify({ error: "provide from_message_id, to_message_id, and summary, or provide ranges" })
-        }
-        requestedRanges = [{
-          from_message_id: args.from_message_id,
-          to_message_id: args.to_message_id,
-          summary: args.summary,
-        }]
+      const missingRequired = requestedRanges.some(range =>
+        !nonEmptyString(range.from_message_id) || !nonEmptyString(range.to_message_id) || !nonEmptyString(range.summary)
+      )
+      if (missingRequired) {
+        return JSON.stringify({ error: "each range must include from_message_id, to_message_id, and summary" })
       }
 
       debugLog(`partial_compact called: ranges=${requestedRanges.length} session=${sessionID}`)
@@ -295,19 +264,6 @@ export function buildCompactTool(
       }
 
       debugLog(`Compaction recorded: ranges=${compactedRanges.length}, ${n_messages_replaced} messages`)
-
-      if (legacyMode) {
-        const only = compactedRanges[0]
-        if (!only) return JSON.stringify({ error: "internal error: missing compacted range" })
-        return JSON.stringify({
-          n_messages_replaced: only.n_messages_replaced,
-          truncated: only.truncated,
-          active_compactions,
-          total_known_messages_replaced,
-          session_id: sessionID,
-          note: "The compacted range is removed from the model-visible view on subsequent calls; the original session log is unchanged.",
-        })
-      }
 
       return JSON.stringify({
         ranges_compacted: compactedRanges,

@@ -83,28 +83,6 @@ describe("partial_compact tool", () => {
     await rm(tempDir, { recursive: true, force: true })
   })
 
-  it("preserves legacy single-range result shape", async () => {
-    const compact = buildCompactTool(client(), {
-      enabled: true,
-      max_summary_chars: 2000,
-      debug_log_path: null,
-      reminder_enabled: true,
-      reminder_interval_tokens: 16000,
-    })
-
-    const raw = await compact.execute({
-      from_message_id: "msg01A",
-      to_message_id: "msg01B",
-      summary: "old setup no longer needed",
-    }, context())
-    const result = JSON.parse(typeof raw === "string" ? raw : raw.output) as { n_messages_replaced: number; truncated: boolean }
-
-    expect(result.n_messages_replaced).toBe(2)
-    expect(result.truncated).toBe(false)
-    const state = await loadState(sid)
-    expect(state.compactions).toHaveLength(1)
-  })
-
   it("compacts multiple disjoint ranges in one call", async () => {
     const compact = buildCompactTool(client(), {
       enabled: true,
@@ -163,7 +141,7 @@ describe("partial_compact tool", () => {
     expect((await loadState(otherSid)).compactions).toHaveLength(1)
   })
 
-  it("rejects mixed legacy and batch modes without writing state", async () => {
+  it("requires ranges without writing state", async () => {
     const compact = buildCompactTool(client(), {
       enabled: true,
       max_summary_chars: 2000,
@@ -172,36 +150,14 @@ describe("partial_compact tool", () => {
       reminder_interval_tokens: 16000,
     })
 
-    const raw = await compact.execute({
-      from_message_id: "msg01A",
-      to_message_id: "msg01B",
-      summary: "legacy",
-      ranges: [{ from_message_id: "msg01C", to_message_id: "msg01D", summary: "batch" }],
-    }, context())
+    const raw = await compact.execute({}, context())
     const result = JSON.parse(typeof raw === "string" ? raw : raw.output) as { error: string }
 
-    expect(result.error).toContain("do not mix")
+    expect(result.error).toContain("provide ranges")
     expect((await loadState(sid)).compactions).toHaveLength(0)
   })
 
-  it("treats materialized empty optional fields as absent", async () => {
-    const compact = buildCompactTool(client(), {
-      enabled: true,
-      max_summary_chars: 2000,
-      debug_log_path: null,
-      reminder_enabled: true,
-      reminder_interval_tokens: 16000,
-    })
-
-    const legacyRaw = await compact.execute({
-      from_message_id: "msg01A",
-      to_message_id: "msg01A",
-      summary: "legacy summary",
-      ranges: [],
-    }, context())
-    const legacyResult = JSON.parse(typeof legacyRaw === "string" ? legacyRaw : legacyRaw.output) as { n_messages_replaced: number }
-    expect(legacyResult.n_messages_replaced).toBe(1)
-
+  it("treats materialized empty optional session_id as current session", async () => {
     const otherSid = "ses01EMPTYOPT"
     const batchCompact = buildCompactTool({
       session: {
@@ -219,18 +175,12 @@ describe("partial_compact tool", () => {
       reminder_interval_tokens: 16000,
     })
     const batchRaw = await batchCompact.execute({
-      from_message_id: "",
-      to_message_id: "",
-      summary: "",
       ranges: [{ session_id: otherSid, from_message_id: "msg03A", to_message_id: "msg03A", summary: "batch summary" }],
     }, context())
     const batchResult = JSON.parse(typeof batchRaw === "string" ? batchRaw : batchRaw.output) as { n_ranges_compacted: number }
     expect(batchResult.n_ranges_compacted).toBe(1)
 
     const currentSessionBatchRaw = await batchCompact.execute({
-      from_message_id: "",
-      to_message_id: "",
-      summary: "",
       ranges: [{ session_id: "", from_message_id: "msg01C", to_message_id: "msg01C", summary: "current batch summary" }],
     }, context())
     const currentSessionBatchResult = JSON.parse(typeof currentSessionBatchRaw === "string" ? currentSessionBatchRaw : currentSessionBatchRaw.output) as { ranges_compacted: Array<{ session_id: string }> }
@@ -247,9 +197,6 @@ describe("partial_compact tool", () => {
     })
 
     const raw = await compact.execute({
-      from_message_id: "",
-      to_message_id: "",
-      summary: "",
       ranges: [{ from_message_id: "msg01A", to_message_id: "msg01A", summary: "" }],
     }, context())
     const result = JSON.parse(typeof raw === "string" ? raw : raw.output) as { error: string }
@@ -264,7 +211,7 @@ describe("partial_compact tool", () => {
     const output = typeof raw === "string" ? raw : raw.output
 
     expect(output).toContain("<instruction name=\"opencode-partial-compact\">")
-    expect(output).toContain("ranges: [{ session_id?, from_message_id, to_message_id, summary }, ...]")
+    expect(output).toContain("Partial compaction replaces no-longer-needed messages")
   })
 
   it("returns current-session message IDs with the instruction block when client-backed", async () => {
@@ -331,17 +278,15 @@ describe("partial_compact tool", () => {
       reminder_interval_tokens: 16000,
     })
     await compact.execute({
-      from_message_id: "msg01A",
-      to_message_id: "msg01B",
-      summary: "old range already compacted",
+      ranges: [{ from_message_id: "msg01A", to_message_id: "msg01B", summary: "old range already compacted" }],
     }, context())
 
     const instructionTool = buildInstructionToolWithClient(client())
     const raw = await instructionTool.execute({}, context())
     const output = typeof raw === "string" ? raw : raw.output
 
-    expect(output).toContain("msg01A, msg01C, msg01D")
-    expect(output).not.toContain("msg01B")
+    expect(output).toContain("msg01C, msg01D")
+    expect(output).not.toContain("msg01A, msg01B")
   })
 
   it("rebaselines reminder cadence immediately after a successful compaction", async () => {
@@ -354,9 +299,7 @@ describe("partial_compact tool", () => {
     })
 
     await compact.execute({
-      from_message_id: "msg01A",
-      to_message_id: "msg01B",
-      summary: "old setup and command output are now durable elsewhere",
+      ranges: [{ from_message_id: "msg01A", to_message_id: "msg01B", summary: "old setup and command output are now durable elsewhere" }],
     }, context())
 
     const state = await loadState(sid)
@@ -388,9 +331,11 @@ describe("partial_compact tool", () => {
     await maybeInjectReminder({ sessionID: sid, output: { system: [] }, messages: bulkyMessages, cfg })
     const compact = buildCompactTool(clientWith(bulkyMessages), cfg)
     await compact.execute({
-      from_message_id: "msg01A",
-      to_message_id: "msg01A",
-      summary: "bulky raw output was summarized after its conclusion became durable",
+      ranges: [{
+        from_message_id: "msg01A",
+        to_message_id: "msg01A",
+        summary: "bulky raw output was summarized after its conclusion became durable",
+      }],
     }, context())
     const output = { system: [] as string[] }
 
