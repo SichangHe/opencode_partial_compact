@@ -21,26 +21,14 @@ read-only instruction tool.
   "name": "partial_compact",
   "description": "from src/prompts/partial-compact-tool-description.md",
   "args": {
-    "from_message_id": {
-      "type": "string",
-      "description": "from src/prompts/partial-compact-arg-from-message-id.md"
-    },
-    "to_message_id": {
-      "type": "string",
-      "description": "from src/prompts/partial-compact-arg-to-message-id.md"
-    },
-    "summary": {
-      "type": "string",
-      "description": "from src/prompts/partial-compact-arg-summary.md"
-    },
     "ranges": {
       "type": "array",
       "description": "from src/prompts/partial-compact-arg-ranges.md"
     }
   },
   "returns": {
-    "n_ranges_compacted": "int (batch mode only)",
-    "ranges_compacted": "array (batch mode only; includes session_id, endpoints, n_messages_replaced, truncated)",
+    "n_ranges_compacted": "int",
+    "ranges_compacted": "array (includes session_id, endpoints, n_messages_replaced, truncated)",
     "n_messages_replaced": "int",
     "truncated": "bool (true if summary was longer than max_summary_chars)",
     "active_compactions": "int",
@@ -97,11 +85,14 @@ every time it appears. This plugin disables Opencode native auto-compaction in t
 config, so the agent is responsible for keeping context healthy with
 `partial_compact` when there is context pressure or bulky stale raw evidence.
 The reminder shows the estimated visible token count and, when the model context
-limit is available, the percentage of the context window in use. It includes a
-short phase-boundary excerpt and points to `partial_compact_instructions` for
+limit is available, the percentage of the context window in use. It points to `partial_compact_instructions` for
 the full named instruction block. The full guide is not repeated every cadence
 tick; the TUI slash command and `partial_compact_instructions` return the full
 block.
+The TUI slash command selects one checkpoint range and sends an agent prompt. It
+does not have a separate multi-range picker or automatic mode; if the agent sees
+additional disjoint stale ranges, it batches them through `partial_compact` with
+`ranges`.
 Every reminder also appends the current session history's ordered `msg...` IDs
 after existing partial-compaction sidecars are applied. The list is a snapshot;
 agents should use the newest list and refresh `partial_compact_instructions`
