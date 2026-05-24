@@ -59,7 +59,7 @@ Notes:
 | `partial_compact` tool succeeds | Append record(s) to in-memory state; write once per target session (atomic per sidecar), then best-effort update `last_reminder` to the post-compaction visible estimate. |
 | Subsequent hook fires | Read in-memory state (no disk hit); collapse view. |
 | Reminder threshold reached | Store the last reminder message ID and visible-token estimate. |
-| Native Opencode compaction starts | No prompt injection; native compaction sees the transformed message view. |
+| Native Opencode compaction starts | The plugin fails closed through `experimental.session.compacting`; reconciliation remains as damage control if a native compaction part is later visible. |
 | Native Opencode compaction makes a record's endpoints unresolvable | Prune that stale record from sidecar and cache. |
 | Session end | Nothing extra; last successful write is already on disk. |
 

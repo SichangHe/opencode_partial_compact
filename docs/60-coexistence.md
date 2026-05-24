@@ -81,12 +81,14 @@ own marker: range validation rejects any range containing a prior
 
 ## With Opencode's own `/compact`
 
-Manual `/compact` coexists. Automatic native compaction must be disabled with
-`compaction.auto=false`; the plugin refuses to operate otherwise. If `/compact`
-runs and discards messages our records reference, our hook skips those records
-in the transformed view. When a native `compaction` part is present, the plugin
-fetches the full session message list and prunes a sidecar record only after
-both endpoints are confirmed absent.
+Native `/compact` is blocked while this plugin is enabled. Automatic native
+compaction is disabled with `compaction.auto=false` by the plugin config hook,
+and `experimental.session.compacting` fails closed if Opencode reaches the
+native compaction path anyway. The `experimental.compaction.autocontinue` hook
+also disables synthetic continuation after any native compaction that escaped the
+primary guard. If a native compaction part is later present, our transform hook
+still skips affected sidecar records and prunes a sidecar record only after the
+full session message list confirms both endpoints are absent.
 Future v0.1 may expose a slash-command status to inform the user.
 
 ## With sub-agents (oh-my-openagent's `call_omo_agent`)
