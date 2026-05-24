@@ -1,5 +1,13 @@
 import { describe, expect, it } from "bun:test"
-import { makeCoexistenceCheck, normalizePluginConfig } from "../src/plugin"
+import {
+  blockNativeCompaction,
+  disableNativeAutoCompaction,
+  disableNativeAutoCompactionWhenEnabled,
+  disableNativeCompactionAutocontinue,
+  NATIVE_COMPACTION_DISABLED_ERROR,
+  makeCoexistenceCheck,
+  normalizePluginConfig,
+} from "../src/plugin"
 
 function client(data: { plugin?: string[]; compaction?: { auto?: boolean } }) {
   return {
@@ -10,6 +18,53 @@ function client(data: { plugin?: string[]; compaction?: { auto?: boolean } }) {
 }
 
 describe("plugin config guard", () => {
+  it("forces native auto-compaction off in the merged config hook", () => {
+    const data: { compaction?: { auto?: boolean; tail_turns?: number } } = {
+      compaction: { auto: true, tail_turns: 15 },
+    }
+
+    disableNativeAutoCompaction(data)
+
+    expect(data.compaction).toEqual({ auto: false, tail_turns: 15 })
+  })
+
+  it("creates compaction config when forcing native auto-compaction off", () => {
+    const data: { compaction?: { auto?: boolean } } = {}
+
+    disableNativeAutoCompaction(data)
+
+    expect(data.compaction).toEqual({ auto: false })
+  })
+
+  it("does not force native auto-compaction off when the plugin is disabled", () => {
+    const data: { compaction?: { auto?: boolean } } = { compaction: { auto: true } }
+
+    disableNativeAutoCompactionWhenEnabled(data, { enabled: false })
+
+    expect(data.compaction).toEqual({ auto: true })
+  })
+
+  it("forces native auto-compaction off when the plugin is enabled", () => {
+    const data: { compaction?: { auto?: boolean } } = { compaction: { auto: true } }
+
+    disableNativeAutoCompactionWhenEnabled(data, { enabled: true })
+
+    expect(data.compaction).toEqual({ auto: false })
+  })
+
+  it("fails closed when native compaction starts", async () => {
+    await expect(blockNativeCompaction({ sessionID: "ses_native" }))
+      .rejects.toThrow(NATIVE_COMPACTION_DISABLED_ERROR)
+  })
+
+  it("disables native compaction auto-continue", () => {
+    const output = { enabled: true }
+
+    disableNativeCompactionAutocontinue({ sessionID: "ses_native", overflow: true }, output)
+
+    expect(output.enabled).toBe(false)
+  })
+
   it("rejects when native auto-compaction is not disabled", async () => {
     await expect(makeCoexistenceCheck(client({ plugin: ["opencode-partial-compact"] }))())
       .rejects.toThrow("set compaction.auto=false")

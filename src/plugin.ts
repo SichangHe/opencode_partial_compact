@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises"
 import { join, dirname } from "node:path"
 import { homedir } from "node:os"
-import type { PluginInput, Plugin } from "@opencode-ai/plugin"
+import type { Plugin } from "@opencode-ai/plugin"
 import { setLogPath, debugLog } from "./log.js"
 import { messagesTransformHandler } from "./hook.js"
 import { maybeInjectReminder } from "./reminder.js"
@@ -52,6 +52,41 @@ export function normalizePluginConfig(parsed: RawPluginConfig): PluginConfig {
     debugLog("Migrated deprecated reminder_context_fraction/reminder_min_tokens config to reminder_interval_tokens")
   }
   return cfg
+}
+
+/**
+ * Disable Opencode's native auto-compaction in the merged runtime config.
+ *
+ * The lazy hook guard below is still useful as a fail-closed check, but it runs
+ * too late to be the primary protection: Opencode decides whether to schedule
+ * native overflow compaction from the live config during session prompting.
+ * Mutating the config hook's merged object keeps that scheduler off even when a
+ * user-level or project-level config forgot to set `compaction.auto=false`.
+ */
+export function disableNativeAutoCompaction(configData: ConfigData): void {
+  configData.compaction = { ...(configData.compaction ?? {}), auto: false }
+}
+
+export function disableNativeAutoCompactionWhenEnabled(configData: ConfigData, cfg: Pick<PluginConfig, "enabled">): void {
+  if (!cfg.enabled) return
+  disableNativeAutoCompaction(configData)
+}
+
+export const NATIVE_COMPACTION_DISABLED_ERROR =
+  "opencode-partial-compact: native Opencode compaction is disabled while this plugin is enabled; " +
+  "use partial_compact for targeted context cleanup instead."
+
+export async function blockNativeCompaction(input: { sessionID: string }): Promise<void> {
+  debugLog(`Blocked native compaction for session=${input.sessionID}`)
+  throw new Error(NATIVE_COMPACTION_DISABLED_ERROR)
+}
+
+export function disableNativeCompactionAutocontinue(
+  input: { sessionID: string; overflow: boolean },
+  output: { enabled: boolean },
+): void {
+  output.enabled = false
+  debugLog(`Disabled native compaction auto-continue for session=${input.sessionID} overflow=${input.overflow}`)
 }
 
 /** Walk up from cwd to $HOME looking for .opencode/{CONFIG_FILENAME}. */
@@ -190,11 +225,28 @@ export const server: Plugin = async (ctx) => {
     : async () => { /* no-op when disabled */ }
 
   return {
+    config: async (input: ConfigData) => {
+      disableNativeAutoCompactionWhenEnabled(input, cfg)
+      debugLog(cfg.enabled
+        ? "Set compaction.auto=false in merged Opencode config"
+        : "Skipped native auto-compaction config change because plugin is disabled")
+    },
     tool: {
       partial_compact: buildCompactTool(ctx.client, cfg),
       partial_compact_instructions: buildInstructionToolWithClient(ctx.client),
     },
     "experimental.chat.messages.transform": wrappedHook,
     "experimental.chat.system.transform": wrappedSystemHook,
+    "experimental.session.compacting": cfg.enabled
+      ? async (input) => {
+          await coexistenceCheck()
+          await blockNativeCompaction(input)
+        }
+      : async () => { /* no-op when disabled */ },
+    "experimental.compaction.autocontinue": cfg.enabled
+      ? async (input, output) => {
+          disableNativeCompactionAutocontinue(input, output)
+        }
+      : async () => { /* no-op when disabled */ },
   }
 }
