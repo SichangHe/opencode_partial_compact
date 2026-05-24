@@ -65,18 +65,18 @@ State is a JSON sidecar at
 The hook rewrites only the model-visible in-memory view; the SQLite log remains
 untouched.
 
-Native Opencode compaction is handled without prompt injection. Opencode calls
-`experimental.chat.messages.transform` before normal model calls and before the
-native compaction model call, so the native compactor sees our already-collapsed
-view. We do not append partial summaries to full-compaction prompts. After
-native compaction, stale sidecar records are pruned only after the full session
-message list confirms both range endpoints are gone. See
+Native Opencode compaction is fail-closed while this plugin is enabled:
+`compaction.auto=false` is enforced in the merged config and
+`experimental.session.compacting` rejects the native compaction path. We do not
+append partial summaries to full-compaction prompts. If an older/stale session
+already contains native compaction parts, stale sidecar records are pruned only
+after the full session message list confirms both range endpoints are gone. See
 [`50-persistence.md`](50-persistence.md).
 
 Agents also get a periodic `experimental.chat.system.transform` reminder when
 the estimated visible context grows by `reminder_interval_tokens` since the
-last reminder. Default: 16k tokens. Because this plugin requires native
-auto-compaction to be disabled, the reminder is a mandatory context-management
+last reminder. Default: 16k tokens. Because this plugin disables native
+auto-compaction in the merged runtime config, the reminder is a mandatory context-management
 prompt: it reports the visible-token estimate, includes context-window percent
 when the model limit is available, and tells the agent to compact stale old
 context more aggressively as the window fills. The 16k setting is the target

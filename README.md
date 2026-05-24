@@ -89,7 +89,7 @@ Create `.opencode/opencode-partial-compact.jsonc` in your project root, or
 }
 ```
 
-Native auto-compaction must stay disabled while this plugin is enabled:
+Native auto-compaction must stay disabled while this plugin is enabled. The plugin enforces this in Opencode's merged runtime config and the explicit setting below documents the intended boundary:
 
 ```jsonc
 {
@@ -99,9 +99,7 @@ Native auto-compaction must stay disabled while this plugin is enabled:
 
 Opencode schedules automatic compaction from the previous assistant message's
 recorded token usage before plugins can recompute the partial-compacted
-effective context. This plugin refuses to operate unless `compaction.auto` is
-`false`, avoiding stale-trigger native compactions when the current visible
-context is already small.
+effective context. This plugin sets `compaction.auto=false` through Opencode's config hook and also keeps a lazy fail-safe check, avoiding stale-trigger native compactions when the current visible context is already small.
 
 `reminder_interval_tokens` is the target reminder cadence. If the active model
 reports a context window smaller than that target, the runtime uses an internal

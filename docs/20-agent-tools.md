@@ -93,8 +93,8 @@ interval to an internal ~80% safety point. If the model limit is unknown, the
 configured target is used unchanged.
 
 The reminder is a mandatory context-hygiene checkpoint, not a command to compact
-every time it appears. This plugin requires Opencode native auto-compaction to
-be disabled, so the agent is responsible for keeping context healthy with
+every time it appears. This plugin disables Opencode native auto-compaction in the merged runtime
+config, so the agent is responsible for keeping context healthy with
 `partial_compact` when there is context pressure or bulky stale raw evidence.
 The reminder shows the estimated visible token count and, when the model context
 limit is available, the percentage of the context window in use. It includes a
