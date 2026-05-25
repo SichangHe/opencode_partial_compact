@@ -72,6 +72,12 @@ export function disableNativeAutoCompactionWhenEnabled(configData: ConfigData, c
   disableNativeAutoCompaction(configData)
 }
 
+function modelLimitSnapshot(model: { limit?: { context?: number; input?: number; output?: number } } | undefined): string {
+  const limit = model?.limit
+  if (!limit) return "model_limit=unknown"
+  return `model_limit.context=${limit.context ?? "unknown"} model_limit.input=${limit.input ?? "unknown"} model_limit.output=${limit.output ?? "unknown"}`
+}
+
 export async function allowNativeCompactionFallback(input: { sessionID: string }): Promise<void> {
   debugLog(`Allowing native compaction fallback for session=${input.sessionID}`)
 }
@@ -192,7 +198,7 @@ export function makeCoexistenceCheck(
 export const server: Plugin = async (ctx) => {
   const cfg = await loadConfig(ctx.directory)
   if (cfg.debug_log_path) setLogPath(cfg.debug_log_path)
-  debugLog("Plugin server() initialised")
+  debugLog(`Plugin server() initialised: enabled=${cfg.enabled} reminder_enabled=${cfg.reminder_enabled} reminder_interval_tokens=${cfg.reminder_interval_tokens}`)
 
   const coexistenceCheck = makeCoexistenceCheck(ctx.client)
 
@@ -212,9 +218,10 @@ export const server: Plugin = async (ctx) => {
     : async () => { /* no-op when disabled */ }
 
   const wrappedSystemHook = cfg.enabled
-    ? async (input: { sessionID?: string; model?: { limit?: { context?: number } } }, output: { system: string[] }) => {
+    ? async (input: { sessionID?: string; model?: { limit?: { context?: number; input?: number; output?: number } } }, output: { system: string[] }) => {
         if (!input.sessionID) return
         await coexistenceCheck()
+        debugLog(`System hook: session=${input.sessionID} ${modelLimitSnapshot(input.model)}`)
         const resp = await ctx.client.session.messages({
           path: { id: input.sessionID },
           throwOnError: true,

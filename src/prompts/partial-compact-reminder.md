@@ -1,1 +1,1 @@
-{{CONTEXT_STATUS}}. Consider partial compaction for stale bulky context; call `partial_compact_instructions` first unless the full partial-compaction instruction block is already in context.
+{{CONTEXT_STATUS}}. {{ACTION}} Call `partial_compact_instructions` first unless the full partial-compaction instruction block is already in context. The message-ID snapshot below is usually enough to choose current-session `from_message_id`/`to_message_id` endpoints.

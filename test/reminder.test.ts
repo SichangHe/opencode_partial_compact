@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { maybeInjectReminder, estimateVisibleTokens, reminderText, reminderTextWithMessageIDs } from "../src/reminder"
-import { addCompaction, loadState, _clearCache, _setStorageDir } from "../src/state"
+import { maybeInjectReminder, estimateVisibleTokens, reminderText, reminderTextWithMessageIDs, effectiveReminderInterval } from "../src/reminder"
+import { addCompaction, loadState, recordReminder, _clearCache, _setStorageDir } from "../src/state"
 
 const sid = "ses01REMINDER000000000"
 
@@ -45,7 +45,7 @@ describe("partial compact reminders", () => {
     })
 
     expect(output.system).toEqual([reminderTextWithMessageIDs({ sessionID: sid, tokenEstimate, messages, model: { limit: { context: 10000 } } })])
-    expect(output.system[0]).toContain("Consider partial compaction for stale bulky context")
+    expect(output.system[0]).toContain("Routine hygiene")
     expect(output.system[0]).toContain("partial_compact_instructions")
     expect(output.system[0]).toContain("Current-session message IDs")
     expect(output.system[0]).toContain("msg01A, msg01B")
@@ -200,11 +200,121 @@ describe("partial compact reminders", () => {
     expect(output.system).toHaveLength(0)
   })
 
+
+  it("uses the configured 400k input budget for a synthetic historic-threshold session", async () => {
+    const highSession = "ses01HISTORICTHRESHOLD"
+    const highMessages = [
+      {
+        info: { id: "msg01H", sessionID: highSession },
+        parts: [{ id: "prt01H", sessionID: highSession, messageID: "msg01H", type: "text" as const, text: "x".repeat(1_040_000) }],
+      },
+      {
+        info: { id: "msg01I", sessionID: highSession },
+        parts: [{ id: "prt01I", sessionID: highSession, messageID: "msg01I", type: "text" as const, text: "current work" }],
+      },
+    ]
+    const tokenEstimate = estimateVisibleTokens(highMessages)
+    const output = { system: [] as string[] }
+
+    await maybeInjectReminder({
+      sessionID: highSession,
+      model: { limit: { context: 400000, input: 400000, output: 128000 } },
+      output,
+      messages: highMessages,
+      cfg: { reminder_enabled: true, reminder_interval_tokens: 16000 },
+    })
+
+    expect(tokenEstimate).toBeGreaterThan(260000)
+    expect(tokenEstimate).toBeLessThan(280000)
+    expect(output.system[0]).toContain("High usage")
+    expect(output.system[0]).not.toContain("Urgent")
+    expect(output.system[0]).not.toContain("Critical")
+    expect(output.system[0]).toContain("msg01H, msg01I")
+  })
+
+  it("reports usage against the explicit input budget when present", async () => {
+    const output = { system: [] as string[] }
+
+    await maybeInjectReminder({
+      sessionID: sid,
+      model: { limit: { context: 400000, input: 10000 } },
+      output,
+      messages,
+      cfg: { reminder_enabled: true, reminder_interval_tokens: 100 },
+    })
+
+    expect(output.system[0]).toContain("% of the effective input/context budget")
+    expect(output.system[0]).toContain("Routine hygiene")
+    expect(output.system[0]).toContain("message-ID snapshot below is usually enough")
+    expect(output.system[0]).toContain("msg01A, msg01B")
+  })
+
+  it("escalates reminder wording above 50, 80, and 90 percent", () => {
+    expect(reminderText({ tokenEstimate: 6000, model: { limit: { input: 10000, context: 400000 } } }))
+      .toContain("High usage")
+    expect(reminderText({ tokenEstimate: 8500, model: { limit: { input: 10000, context: 400000 } } }))
+      .toContain("Urgent")
+    expect(reminderText({ tokenEstimate: 9500, model: { limit: { input: 10000, context: 400000 } } }))
+      .toContain("Critical")
+  })
+
+
+  it("emits when crossing the 50 percent threshold before the cadence interval", async () => {
+    const thresholdSession = "ses01HALFTHRESHOLD"
+    const thresholdMessages = [{
+      info: { id: "msg01H", sessionID: thresholdSession },
+      parts: [{ id: "prt01H", sessionID: thresholdSession, messageID: "msg01H", type: "text" as const, text: "x".repeat(20_000) }],
+    }]
+    await recordReminder(thresholdSession, {
+      visible_token_estimate: 4900,
+      message_id: "msg01H",
+      created_at_iso: new Date().toISOString(),
+    })
+    const output = { system: [] as string[] }
+
+    await maybeInjectReminder({
+      sessionID: thresholdSession,
+      model: { limit: { input: 10000, context: 400000 } },
+      output,
+      messages: thresholdMessages,
+      cfg: { reminder_enabled: true, reminder_interval_tokens: 16000 },
+    })
+
+    expect(estimateVisibleTokens(thresholdMessages)).toBeLessThan(8000)
+    expect(output.system[0]).toContain("High usage")
+  })
+
+  it("emits again when crossing a higher usage threshold before another full interval", async () => {
+    const thresholdSession = "ses01THRESHOLD"
+    const thresholdMessages = [{
+      info: { id: "msg01T", sessionID: thresholdSession },
+      parts: [{ id: "prt01T", sessionID: thresholdSession, messageID: "msg01T", type: "text" as const, text: "x".repeat(33_000) }],
+    }]
+    await recordReminder(thresholdSession, {
+      visible_token_estimate: 6000,
+      message_id: "msg01T",
+      created_at_iso: new Date().toISOString(),
+    })
+    const output = { system: [] as string[] }
+
+    await maybeInjectReminder({
+      sessionID: thresholdSession,
+      model: { limit: { input: 10000, context: 400000 } },
+      output,
+      messages: thresholdMessages,
+      cfg: { reminder_enabled: true, reminder_interval_tokens: 16000 },
+    })
+
+    expect(effectiveReminderInterval(16000, { limit: { input: 10000, context: 400000 } })).toBe(8000)
+    expect(estimateVisibleTokens(thresholdMessages)).toBeLessThan(14000)
+    expect(output.system[0]).toContain("Urgent")
+  })
+
   it("falls back to a token-only estimate when the model context limit is unavailable", () => {
     const text = reminderText({ tokenEstimate: 1234 })
 
     expect(text).toContain("estimated visible context: ~1234 tokens")
-    expect(text).toContain("call `partial_compact_instructions` first")
+    expect(text).toContain("Call `partial_compact_instructions` first")
     expect(text).not.toContain("% of the context window")
   })
 })

@@ -6,7 +6,7 @@ import { loadPrompt, renderPrompt } from "./prompt-loader.js"
 import { currentSessionMessageIDReference } from "./message-ids.js"
 
 type Message = { info: { id: string; sessionID: string }; parts: Part[] }
-type ModelLike = { limit?: { context?: number } }
+type ModelLike = { limit?: { context?: number; input?: number; output?: number } }
 
 export type ReminderConfig = {
   reminder_enabled: boolean
@@ -48,26 +48,77 @@ export function estimateVisibleTokens(messages: readonly Message[]): number {
   return Math.ceil(JSON.stringify(compact).length / 4)
 }
 
-function pctText(tokenEstimate: number, model: ModelLike | undefined): string {
-  const limit = model?.limit?.context
-  if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0) {
-    return `estimated visible context: ~${tokenEstimate} tokens`
-  }
-  const pct = Math.min(999, Math.round((tokenEstimate / limit) * 100))
-  return `estimated visible context: ~${tokenEstimate}/${limit} tokens (${pct}% of the context window)`
+export function effectiveLimit(model: ModelLike | undefined): number | null {
+  const candidates = [model?.limit?.input, model?.limit?.context]
+    .filter((limit): limit is number => typeof limit === "number" && Number.isFinite(limit) && limit > 0)
+  if (candidates.length === 0) return null
+  return Math.min(...candidates)
 }
 
-function effectiveReminderInterval(configuredInterval: number, model: ModelLike | undefined): number {
-  const limit = model?.limit?.context
+function usageLevel(tokenEstimate: number, model: ModelLike | undefined): "unknown" | "routine" | "high" | "urgent" | "critical" {
+  const limit = effectiveLimit(model)
+  if (!limit) return "unknown"
+  const ratio = tokenEstimate / limit
+  if (ratio >= 0.9) return "critical"
+  if (ratio >= 0.8) return "urgent"
+  if (ratio >= 0.5) return "high"
+  return "routine"
+}
+
+function pctText(tokenEstimate: number, model: ModelLike | undefined): string {
+  const limit = effectiveLimit(model)
+  if (!limit) return `estimated visible context: ~${tokenEstimate} tokens`
+  const pct = Math.min(999, Math.round((tokenEstimate / limit) * 100))
+  const label = model?.limit?.input ? "effective input/context budget" : "context window"
+  return `estimated visible context: ~${tokenEstimate}/${limit} tokens (${pct}% of the ${label})`
+}
+
+export function effectiveReminderInterval(configuredInterval: number, model: ModelLike | undefined): number {
+  const limit = effectiveLimit(model)
   if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0 || limit >= configuredInterval) {
     return configuredInterval
   }
   return Math.max(1, Math.floor(limit * 0.8))
 }
 
+function usageRank(level: ReturnType<typeof usageLevel>): number {
+  switch (level) {
+    case "unknown":
+      return 0
+    case "routine":
+      return 1
+    case "high":
+      return 2
+    case "urgent":
+      return 3
+    case "critical":
+      return 4
+  }
+}
+
+function crossedUsageLevel(input: { tokenEstimate: number; lastEstimate: number; model?: ModelLike }): boolean {
+  return usageRank(usageLevel(input.tokenEstimate, input.model)) > usageRank(usageLevel(input.lastEstimate, input.model))
+}
+
+function actionText(tokenEstimate: number, model: ModelLike | undefined): string {
+  switch (usageLevel(tokenEstimate, model)) {
+    case "critical":
+      return "Critical: compact anything not immediately needed before more tool calls or long reasoning."
+    case "urgent":
+      return "Urgent: compact stale context now; do not postpone cleanup until overflow."
+    case "high":
+      return "High usage: clean up stale message ranges, starting with recent stale ranges."
+    case "routine":
+      return "Routine hygiene: compact any stale context not very likely to be useful soon, including tool output, resolved detours, and obsolete edits."
+    case "unknown":
+      return "Routine hygiene: compact any stale context not very likely to be useful soon, including tool output, resolved detours, and obsolete edits."
+  }
+}
+
 export function reminderText(input: { tokenEstimate: number; model?: ModelLike }): string {
   return renderPrompt(loadPrompt("partial-compact-reminder.md"), {
     CONTEXT_STATUS: pctText(input.tokenEstimate, input.model),
+    ACTION: actionText(input.tokenEstimate, input.model),
   }).replace(/\n+/g, " ")
 }
 
@@ -109,8 +160,16 @@ export async function maybeInjectReminder(input: {
     })
     return
   }
-  if (tokenEstimate < interval) return
-  if (tokenEstimate - lastEstimate < interval) return
+  const thresholdDue = crossedUsageLevel({ tokenEstimate, lastEstimate, ...(input.model ? { model: input.model } : {}) })
+  if (tokenEstimate < interval && !thresholdDue) {
+    debugLog(`partial_compact reminder skipped: session=${input.sessionID} visible_tokens≈${tokenEstimate} interval=${interval} level=${usageLevel(tokenEstimate, input.model)}`)
+    return
+  }
+  const intervalDue = tokenEstimate - lastEstimate >= interval
+  if (!intervalDue && !thresholdDue) {
+    debugLog(`partial_compact reminder skipped: session=${input.sessionID} visible_tokens≈${tokenEstimate} last≈${lastEstimate} interval=${interval} level=${usageLevel(tokenEstimate, input.model)}`)
+    return
+  }
   input.output.system.push(reminderTextWithMessageIDs({
     sessionID: input.sessionID,
     tokenEstimate,
@@ -123,5 +182,5 @@ export async function maybeInjectReminder(input: {
     message_id: messageID,
     created_at_iso: new Date().toISOString(),
   })
-  debugLog(`partial_compact reminder injected: session=${input.sessionID} visible_tokens≈${tokenEstimate}`)
+  debugLog(`partial_compact reminder injected: session=${input.sessionID} visible_tokens≈${tokenEstimate} interval=${interval} level=${usageLevel(tokenEstimate, input.model)}`)
 }
