@@ -12,14 +12,13 @@ Exposes two tools:
 - `partial_compact_instructions()` returns the named instruction block
   `opencode-partial-compact`. Agents should read it before calling
   `partial_compact` if it is not already in their context window.
-- `partial_compact(...)` lets the agent replace one contiguous range, or
-  multiple disjoint ranges with `ranges: [{ session_id?, from_message_id,
-  to_message_id, summary }]`, with short summaries it writes. Omitting
-  `session_id` targets the current session; including it allows one batch call
-  to compact verified ranges across multiple sessions.
+- `partial_compact(...)` lets the agent replace one contiguous current-session
+  message range, or multiple disjoint current-session ranges, with short
+  summaries it writes: `ranges: [{ from_message_id, to_message_id, summary }]`.
+  Agents do not choose a session; the tool compacts only the current session.
 
 Periodic reminders tell the agent when the model-visible context has grown
-enough to warrant cleanup. The full tool and reminder contract lives in
+enough to warrant cleanup, using the conservative smaller of `limit.input` and `limit.context` when available and escalating wording at 50%, 80%, and 90% of that effective budget. The full tool and reminder contract lives in
 [`docs/20-agent-tools.md`](docs/20-agent-tools.md). Reminders are mandatory
 checkpoints that point to `partial_compact_instructions`; read that guide
 before compacting unless the named instruction is already in context. Reminders
@@ -101,10 +100,9 @@ recorded token usage before plugins can recompute the partial-compacted
 effective context. This plugin sets `compaction.auto=false` through Opencode's config hook and keeps a lazy fail-safe check, avoiding stale-trigger native compactions when the current visible context is already small. If Opencode still reaches the native compaction path near overflow, the plugin lets that native fallback run instead of throwing; partial compaction remains the preferred proactive path, but high-context sessions should recover rather than stop silently.
 
 `reminder_interval_tokens` is the target reminder cadence. If the active model
-reports a context window smaller than that target, the runtime uses an internal
-safety interval of roughly 80% of the model context window so mandatory
-reminders still appear before the window is exhausted. When the model limit is
-unknown, the configured target is used unchanged.
+reports an input budget or context window smaller than that target, the runtime
+uses an internal safety interval of roughly 80% of that effective budget so
+mandatory reminders still appear before the window is exhausted. Reminder text uses the conservative smaller of `limit.input` and `limit.context` when available; when both are unknown, the configured target is used unchanged.
 
 ## Coexistence
 

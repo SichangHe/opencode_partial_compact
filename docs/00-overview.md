@@ -10,14 +10,14 @@ the v1 draft and why we cut scope.
 Two tools:
 
 ```text
-partial_compact(ranges: [{ session_id?, from_message_id, to_message_id, summary }, ...])
+partial_compact(ranges: [{ from_message_id, to_message_id, summary }, ...])
 partial_compact_instructions() -> instruction block "opencode-partial-compact"
 ```
 
-`partial_compact` replaces a contiguous range of past messages (inclusive on
-both ends), or multiple disjoint ranges in one batch call, with synthetic text
-parts containing the agent-written summaries. Batch ranges default to the
-current session and may include `session_id` for other verified sessions.
+`partial_compact` replaces a contiguous range of past current-session messages
+(inclusive on both ends), or multiple disjoint current-session ranges in one
+batch call, with synthetic text parts containing the agent-written summaries.
+The tool always operates on the active conversation's message ranges.
 Originals stay in Opencode's `PartTable` untouched. There is no `pc_peek`,
 `pc_restore`, or `pc_list` in v0.
 
@@ -76,13 +76,14 @@ message list confirms both range endpoints are gone. See
 Agents also get a periodic `experimental.chat.system.transform` reminder when
 the estimated visible context grows by `reminder_interval_tokens` since the
 last reminder. Default: 16k tokens. Because this plugin disables native
-auto-compaction in the merged runtime config, the reminder is a mandatory context-management
-prompt: it reports the visible-token estimate, includes context-window percent
-when the model limit is available, and tells the agent to compact stale old
-context more aggressively as the window fills. The 16k setting is the target
-cadence; if a known model context window is smaller than the target, the
-runtime clamps to an internal ~80% safety interval so reminders can still fire
-before exhaustion. Reminders also point to the named
+auto-compaction in the merged runtime config, the reminder is a mandatory
+context-management prompt: it reports the visible-token estimate, includes the
+percentage of the effective budget when `limit.input` or `limit.context` is
+available, and tells the agent to target staying under 50% visible context with
+urgent cleanup at higher usage levels. The 16k setting is the target cadence;
+if a known effective budget is smaller than the target, the runtime clamps to
+an internal ~80% safety interval so reminders can still fire before exhaustion.
+Reminders also point to the named
 `opencode-partial-compact` instruction, fetched through
 `partial_compact_instructions`, instead of injecting the full guide every turn.
 
