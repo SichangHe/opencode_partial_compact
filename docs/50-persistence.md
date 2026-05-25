@@ -56,7 +56,7 @@ Notes:
 |---|---|
 | Plugin `server()` init | Note storage dir; lazy per-session load. |
 | First time we see a `sessionID` in the hook | Try to read sidecar; absent → empty in-memory state for this session. |
-| `partial_compact` tool succeeds | Append record(s) to in-memory state; write once per target session (atomic per sidecar), then best-effort update `last_reminder` to the post-compaction visible estimate. |
+| `partial_compact` tool succeeds | Append current-session record(s) to in-memory state; write once to the current session sidecar atomically, then best-effort update `last_reminder` to the post-compaction visible estimate. |
 | Subsequent hook fires | Read in-memory state (no disk hit); collapse view. |
 | Reminder threshold reached | Store the last reminder message ID and visible-token estimate. |
 | Native Opencode compaction starts | Allow native compaction as an overflow fallback; keep auto-continue enabled only when OpenCode reports overflow; reconciliation handles affected sidecar records if a native compaction part is later visible. |

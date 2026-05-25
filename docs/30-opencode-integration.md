@@ -99,7 +99,7 @@ we error out if the plugin order is wrong.
 - `experimental.chat.messages.transform` — rewrite the view.
 - `experimental.chat.system.transform` — inject a mandatory partial-compaction
   reminder after visible context grows. The reminder reports the estimated
-  visible context size, includes context-window percentage when available, and
+  visible context size, includes context-window percentage when available, targets staying below 50%, and
   points to the named instruction so agents can review the full compaction
   policy before choosing ranges. It also appends ordered current-session `msg...` IDs after existing
   partial compactions are applied. `reminder_interval_tokens` remains the
@@ -120,11 +120,10 @@ continuation enabled only after overflow fallback. We do NOT consume
 
 ```ts
 async execute(args, ctx) {
-  normalize ranges[]
-  group by target session_id (default ctx.sessionID)
-  validateRanges(group, messages, records)  // pure, all before writes
+  normalize ranges[] to ctx.sessionID
+  validateRanges(ranges, messages, records)  // pure, all before writes
   const records = ranges.map(({ from, to, summary, ... }) => ...)
-  await state.addCompactions(sessionID, records) // one write per target session
+  await state.addCompactions(sessionID, records) // one current-session write
   return { n_messages_replaced, truncated }
 }
 ```
