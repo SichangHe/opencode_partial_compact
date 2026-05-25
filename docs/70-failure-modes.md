@@ -52,16 +52,14 @@ rename bad file to `{sessionId}.json.bad-{epoch}`, treat in-memory
 state as empty for that session. Version skew → refuse to operate on
 that sidecar with a clear error.
 
-## F6. Reference to message ID not in target session
+## F6. Reference to message ID not in current session
 
-Agent passes an ID that does not exist in the target session. For `ranges`,
-the target session is `ranges[].session_id` when present, otherwise the current
-session.
+Agent passes an ID that does not exist in the active conversation.
+`partial_compact` operates on current-session message ranges.
 
-**v0 handling.** The tool fetches messages for the target session through the
+**v0 handling.** The tool fetches messages for the current session through the
 plugin SDK client and validates against that list. Not found → tool error
-`"message msg... not found in this session"` for that target session. No state
-change.
+`"message msg... not found in this session"`. No state change.
 
 ## F7. Compaction empties visible context
 
@@ -132,8 +130,6 @@ endpoints disappeared from the native-compacted view.
 
 - Multi-host shared storage.
 - Encryption at rest.
-- Cross-session ranges in one tool call are supported, but each range still
-  compacts one target session's sidecar independently.
 - Concurrent Opencode processes on the same session (single-process
   assumed; sidecar atomic rename is best-effort if used).
 - Reward-hacking eval (OQ-11). Future evaluation work.
