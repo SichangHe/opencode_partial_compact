@@ -1,1 +1,1 @@
-Concise replacement text for this range. Mention relevant session IDs and why this range is safe to compact.
+Concise replacement text for this current-session message range. Preserve durable facts such as files changed, decisions made, validation results, unresolved risks, and why the range is safe to compact. Include old message IDs only when likely useful for precise recovery.
