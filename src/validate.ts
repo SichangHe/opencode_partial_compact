@@ -28,6 +28,7 @@ export type ValidationError =
   | { kind: "tool_pair_split"; at: string; extend_to?: string; extend_from?: string; start_after?: string }
 
 export type CompactionRangeInput = {
+  target_session_id?: string | undefined
   session_id?: string | undefined
   from_message_id: string
   to_message_id: string

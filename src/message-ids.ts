@@ -18,7 +18,7 @@ function messageIDLines(messages: readonly MessageIDLike[]): string {
   const lines: string[] = []
   for (let i = 0; i < visible.length; i += 8) {
     if (messages.length > MAX_MESSAGE_IDS && i === HEAD_MESSAGE_IDS) {
-      lines.push(`- ... ${messages.length - MAX_MESSAGE_IDS} older middle IDs omitted; use session history tools if you need them ...`)
+      lines.push(`- ... ${messages.length - MAX_MESSAGE_IDS} older middle IDs omitted; use message search/read tools for current session history if you need them ...`)
     }
     lines.push(`- ${visible.slice(i, i + 8).map(msg => msg.info.id).join(", ")}`)
   }

@@ -49,6 +49,14 @@ function context(): ToolContext {
   }
 }
 
+function executeCompactWithRawArgs(
+  compact: ReturnType<typeof buildCompactTool>,
+  args: unknown,
+  ctx: ToolContext = context(),
+) {
+  return compact.execute(args as Parameters<typeof compact.execute>[0], ctx)
+}
+
 const pluginClient = {
   ...client(),
   config: {
@@ -106,7 +114,7 @@ describe("partial_compact tool", () => {
     expect(state.compactions.map(rec => rec.from_message_id)).toEqual(["msg01A", "msg01C"])
   })
 
-  it("compacts ranges across multiple sessions in one call", async () => {
+  it("rejects attempts to compact another session in one call", async () => {
     const otherSid = "ses01OTHER000000000000"
     const compact = buildCompactTool({
       session: {
@@ -127,18 +135,58 @@ describe("partial_compact tool", () => {
       reminder_interval_tokens: 16000,
     })
 
-    const raw = await compact.execute({
+    const raw = await executeCompactWithRawArgs(compact, {
       ranges: [
         { from_message_id: "msg01A", to_message_id: "msg01A", summary: "current session stale context" },
         { session_id: otherSid, from_message_id: "msg02A", to_message_id: "msg02B", summary: "other session stale context" },
       ],
-    }, context())
-    const result = JSON.parse(typeof raw === "string" ? raw : raw.output) as { n_ranges_compacted: number; ranges_compacted: Array<{ session_id: string }> }
+    })
+    const result = JSON.parse(typeof raw === "string" ? raw : raw.output) as { error: string }
 
-    expect(result.n_ranges_compacted).toBe(2)
-    expect(result.ranges_compacted.map(range => range.session_id)).toEqual([sid, otherSid])
+    expect(result.error).toContain("current session")
+    expect((await loadState(sid)).compactions).toHaveLength(0)
+    expect((await loadState(otherSid)).compactions).toHaveLength(0)
+  })
+
+
+  it("accepts a legacy selector only when it matches the current session", async () => {
+    const compact = buildCompactTool(client(), {
+      enabled: true,
+      max_summary_chars: 2000,
+      debug_log_path: null,
+      reminder_enabled: true,
+      reminder_interval_tokens: 16000,
+    })
+
+    const args = compact.args.ranges.parse([
+      { target_session_id: sid, from_message_id: "msg01A", to_message_id: "msg01A", summary: "current session compatibility selector" },
+    ])
+    const raw = await executeCompactWithRawArgs(compact, {
+      ranges: args,
+    })
+    const result = JSON.parse(typeof raw === "string" ? raw : raw.output) as { ranges_compacted: Array<{ session_id: string }> }
+
+    expect(result.ranges_compacted[0].session_id).toBe(sid)
     expect((await loadState(sid)).compactions).toHaveLength(1)
-    expect((await loadState(otherSid)).compactions).toHaveLength(1)
+  })
+
+  it("rejects conflicting target_session_id and legacy session_id", async () => {
+    const compact = buildCompactTool(client(), {
+      enabled: true,
+      max_summary_chars: 2000,
+      debug_log_path: null,
+      reminder_enabled: true,
+      reminder_interval_tokens: 16000,
+    })
+
+    const raw = await executeCompactWithRawArgs(compact, {
+      ranges: [{ target_session_id: "ses01A", session_id: "ses01B", from_message_id: "msg01A", to_message_id: "msg01A", summary: "conflicting selectors" }],
+    })
+    const result = JSON.parse(typeof raw === "string" ? raw : raw.output) as { error: string }
+
+    expect(result.error).toContain("target_session_id and legacy session_id must match")
+    expect((await loadState("ses01A")).compactions).toHaveLength(0)
+    expect((await loadState("ses01B")).compactions).toHaveLength(0)
   })
 
   it("requires ranges without writing state", async () => {
@@ -150,7 +198,7 @@ describe("partial_compact tool", () => {
       reminder_interval_tokens: 16000,
     })
 
-    const raw = await compact.execute({}, context())
+    const raw = await executeCompactWithRawArgs(compact, {})
     const result = JSON.parse(typeof raw === "string" ? raw : raw.output) as { error: string }
 
     expect(result.error).toContain("provide ranges")
@@ -158,31 +206,16 @@ describe("partial_compact tool", () => {
   })
 
   it("treats materialized empty optional session_id as current session", async () => {
-    const otherSid = "ses01EMPTYOPT"
-    const batchCompact = buildCompactTool({
-      session: {
-        messages: async (input) => ({
-          data: input.path.id === sid
-            ? messages
-            : [{ info: { id: "msg03A", sessionID: otherSid }, parts: [] }],
-        }),
-      },
-    }, {
+    const batchCompact = buildCompactTool(client(), {
       enabled: true,
       max_summary_chars: 2000,
       debug_log_path: null,
       reminder_enabled: true,
       reminder_interval_tokens: 16000,
     })
-    const batchRaw = await batchCompact.execute({
-      ranges: [{ session_id: otherSid, from_message_id: "msg03A", to_message_id: "msg03A", summary: "batch summary" }],
-    }, context())
-    const batchResult = JSON.parse(typeof batchRaw === "string" ? batchRaw : batchRaw.output) as { n_ranges_compacted: number }
-    expect(batchResult.n_ranges_compacted).toBe(1)
-
-    const currentSessionBatchRaw = await batchCompact.execute({
+    const currentSessionBatchRaw = await executeCompactWithRawArgs(batchCompact, {
       ranges: [{ session_id: "", from_message_id: "msg01C", to_message_id: "msg01C", summary: "current batch summary" }],
-    }, context())
+    })
     const currentSessionBatchResult = JSON.parse(typeof currentSessionBatchRaw === "string" ? currentSessionBatchRaw : currentSessionBatchRaw.output) as { ranges_compacted: Array<{ session_id: string }> }
     expect(currentSessionBatchResult.ranges_compacted[0].session_id).toBe(sid)
   })
@@ -221,7 +254,6 @@ describe("partial_compact tool", () => {
 
     expect(output).toContain("<instruction name=\"opencode-partial-compact\">")
     expect(output).toContain("Current-session message IDs for `partial_compact`")
-    expect(output).toContain(`session_id: ${sid}`)
     expect(output).toContain("msg01A, msg01B, msg01C, msg01D")
   })
 

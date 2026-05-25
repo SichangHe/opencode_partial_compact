@@ -72,6 +72,27 @@ function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0
 }
 
+function requestedSessionID(range: CompactionRangeInput): string | null {
+  if (nonEmptyString(range.target_session_id)) return range.target_session_id
+  if (nonEmptyString(range.session_id)) return range.session_id
+  return null
+}
+
+function targetSessionID(range: CompactionRangeInput, currentSessionID: string): string {
+  return requestedSessionID(range) ?? currentSessionID
+}
+
+function hasConflictingTargetSessionIDs(range: CompactionRangeInput): boolean {
+  return nonEmptyString(range.target_session_id) &&
+    nonEmptyString(range.session_id) &&
+    range.target_session_id !== range.session_id
+}
+
+function targetsAnotherSession(range: CompactionRangeInput, currentSessionID: string): boolean {
+  const requested = requestedSessionID(range)
+  return requested !== null && requested !== currentSessionID
+}
+
 async function recordPostCompactionReminderBaseline(
   sessionID: string,
   messages: Messages,
@@ -138,11 +159,10 @@ export function buildCompactTool(
     args: {
       ranges: tool.schema
         .array(tool.schema.object({
-          session_id: tool.schema.string().optional().describe(loadPrompt("partial-compact-range-session-id.md")),
           from_message_id: tool.schema.string().describe(loadPrompt("partial-compact-range-from-message-id.md")),
           to_message_id: tool.schema.string().describe(loadPrompt("partial-compact-range-to-message-id.md")),
           summary: tool.schema.string().describe(loadPrompt("partial-compact-range-summary.md")),
-        }))
+        }).passthrough())
         .describe(
           loadPrompt("partial-compact-arg-ranges.md"),
         ),
@@ -154,9 +174,9 @@ export function buildCompactTool(
       }
 
       const sessionID = ctx.sessionID
-      const requestedRanges: CompactionRangeInput[] = args.ranges?.filter(range =>
-        nonEmptyString(range.from_message_id) || nonEmptyString(range.to_message_id) || nonEmptyString(range.summary) || nonEmptyString(range.session_id),
-      ) ?? []
+      const requestedRanges = ((args.ranges ?? []) as CompactionRangeInput[]).filter(range =>
+        nonEmptyString(range.from_message_id) || nonEmptyString(range.to_message_id) || nonEmptyString(range.summary) || nonEmptyString(range.target_session_id) || nonEmptyString(range.session_id),
+      )
       if (requestedRanges.length === 0) {
         return JSON.stringify({ error: "provide ranges with at least one complete range" })
       }
@@ -166,12 +186,18 @@ export function buildCompactTool(
       if (missingRequired) {
         return JSON.stringify({ error: "each range must include from_message_id, to_message_id, and summary" })
       }
+      if (requestedRanges.some(hasConflictingTargetSessionIDs)) {
+        return JSON.stringify({ error: "target_session_id and legacy session_id must match when both are provided" })
+      }
+      if (requestedRanges.some(range => targetsAnotherSession(range, sessionID))) {
+        return JSON.stringify({ error: "partial_compact can only compact message ranges in the current session; omit session selectors" })
+      }
 
       debugLog(`partial_compact called: ranges=${requestedRanges.length} session=${sessionID}`)
 
       const normalizedRanges: NormalizedCompactionRange[] = requestedRanges.map(range => {
         const truncated = truncateSummary(range.summary, cfg.max_summary_chars)
-        return { ...range, session_id: nonEmptyString(range.session_id) ? range.session_id : sessionID, summary: truncated.summary, truncated: truncated.truncated }
+        return { ...range, session_id: targetSessionID(range, sessionID), summary: truncated.summary, truncated: truncated.truncated }
       })
 
       const rangesBySession = groupRangesBySession(normalizedRanges)
@@ -238,7 +264,7 @@ export function buildCompactTool(
           debugLog(`Failed to persist compactions for ${targetSessionID}: ${String(err)}`)
           return JSON.stringify({
             error: `Failed to persist compactions for session ${targetSessionID}: ${String(err)}`,
-            note: "All ranges are prevalidated before writes. Persistence is atomic per target session sidecar; a cross-session batch can report failure after an earlier target session was already written.",
+            note: "All ranges are prevalidated before writes. Persistence is atomic for the current session sidecar.",
           })
         }
         try {
