@@ -1,9 +1,9 @@
 <instruction name="opencode-partial-compact">
 Partial compaction replaces no-longer-needed messages from the agent's context window with agent-provided summaries.
 
-Strongly consider partial compaction for any stale context that is not very likely to be useful soon: long tool output with short takeaways, resolved detours, repeated investigation, obsolete edits, or anything irrelevant to the current task.
+Strongly consider partial compaction for any stale context not very likely to be useful soon: tool output with much shorter takeaways, resolved detours, repeated investigation, obsolete edits, or anything irrelevant to the current task.
 
-Each summary should say what was removed, why it is safe to forget verbatim, and the durable facts needed later. Include old message IDs only when they are likely to be useful for precise recovery; otherwise prefer durable files, decisions, results, and the newest useful summary trail.
+Each summary should say what was removed, why it is safe to forget, and any durable facts needed later, in short. Include old message IDs iff they are likely to be useful for precise recovery.
 
 MUST preserve instead of replace:
 - active system, developer, tool, and user instructions;
@@ -11,12 +11,14 @@ MUST preserve instead of replace:
 - key decisions, assumptions, unresolved questions, blockers, and risks;
 - information needed for the current task or immediately foreseeable follow-up work.
 
-Use `partial_compact_instructions` to refresh the current visible message IDs before choosing endpoints. The message-ID list is for precise current-session range selection and recovery when needed; compacted message ranges can hide messages and the newest safe endpoints may differ from what you remember.
-Call `partial_compact` with `ranges: [{ from_message_id, to_message_id, summary }]`. Each object compacts only the selected current-session message range. Batch multiple disjoint stale message ranges only when each summary is safe.
+Call `partial_compact` with `ranges: [{ from_message_id, to_message_id, summary }]`. Each object compacts only the selected message range. Batch all message ranges into a single call. Example: `partial_compact({ranges: [{from_message_id:"msg1",to_message_id:"msg4",summary:"msg1, msg 2 did blah."},{from_message_id:"msg11",to_message_id:"msg18",summary:"Finished blah thru iterations including msg15, msg16, msg17, msg18."}]})`.
+If you do not remember message IDs, you may use `partial_compact_current_session_message_ids` to list the current visible message IDs.
 
-Tail compaction: regardless of current context size, summarize the newest unneeded stale messages to keep the working context lean and preserve KV cache.
+Tail compaction: regardless of current context size, aggressively summarize the newest unneeded messages to keep the working context lean while preserving KV cache.
 
-Context budget target: keep the visible context under 50% of the effective context/input budget whenever possible. Compact stale context even below that target when it is no longer very likely to be useful soon. If usage reaches or exceeds 50%, compact stale context now until the visible context is back under 50%, starting with recent stale ranges and moving backward as needed. Above 80%, treat compaction as urgent before more long-running tools or broad exploration. Above 90%, compact anything not immediately needed.
+Full-session compaction: on higher context usage, compact stale context more aggressively, starting with recent ranges and moving backward as needed.
 
-Original messages remain in the session log. If you need them later, use message search/read tools for the current session history; in the current toolset these fixed tool names are `session_search` and `session_read`.
+Try to keep your context window under 50%.
+
+Original messages remain in the session log. If you need them later, use message search/read tools for the current session history: `session_search` and `session_read`.
 </instruction>
