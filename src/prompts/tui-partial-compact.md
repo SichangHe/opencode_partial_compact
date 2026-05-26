@@ -1,4 +1,4 @@
-{{INSTRUCTION_BLOCK}}
+{{INSTRUCTION_POINTER}}
 
 The user selected one partial-compaction checkpoint. This slash command is not automatic and does not open a multi-range picker; it gives you one exact range to summarize now.
 

@@ -1,6 +1,6 @@
 import type { Part } from "@opencode-ai/sdk/v2"
 import type { CompactionRecord } from "./validate.js"
-import { partialCompactInstructionBlock } from "./instructions.js"
+import { partialCompactInstructionPointer } from "./instructions.js"
 import { loadPrompt, renderPrompt } from "./prompt-loader.js"
 
 export type TuiMessage = {
@@ -104,7 +104,7 @@ export function buildPartialCompactPrompt(input: {
   checkpointTitle: string
 }): string {
   return renderPrompt(loadPrompt("tui-partial-compact.md"), {
-    INSTRUCTION_BLOCK: partialCompactInstructionBlock(),
+    INSTRUCTION_POINTER: partialCompactInstructionPointer(),
     FROM_MESSAGE_ID: input.fromMessageID,
     TO_MESSAGE_ID: input.toMessageID,
     CHECKPOINT_TITLE: input.checkpointTitle,
