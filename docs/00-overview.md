@@ -7,11 +7,12 @@ the v1 draft and why we cut scope.
 
 ## What the agent can do
 
-Two tools:
+Three tools:
 
 ```text
 partial_compact(ranges: [{ from_message_id, to_message_id, summary }, ...])
 partial_compact_instructions() -> instruction block "opencode-partial-compact"
+partial_compact_current_session_message_ids() -> ordered visible current-session msg... IDs
 ```
 
 `partial_compact` replaces a contiguous range of past current-session messages
@@ -77,15 +78,13 @@ Agents also get a periodic `experimental.chat.system.transform` reminder when
 the estimated visible context grows by `reminder_interval_tokens` since the
 last reminder. Default: 16k tokens. Because this plugin disables native
 auto-compaction in the merged runtime config, the reminder is a mandatory
-context-management prompt: it reports the visible-token estimate, includes the
-percentage of the effective budget when `limit.input` or `limit.context` is
-available, and tells the agent to target staying under 50% visible context with
-urgent cleanup at higher usage levels. The 16k setting is the target cadence;
+context-management prompt: it injects only a compact status line such as
+`current context window: 42k (37% full)`. The 16k setting is the target cadence;
 if a known effective budget is smaller than the target, the runtime clamps to
 an internal ~80% safety interval so reminders can still fire before exhaustion.
-Reminders also point to the named
-`opencode-partial-compact` instruction, fetched through
-`partial_compact_instructions`, instead of injecting the full guide every turn.
+Agents can fetch the full named `opencode-partial-compact` instruction through
+`partial_compact_instructions` and current visible endpoints through
+`partial_compact_current_session_message_ids`.
 
 ## Bun, ESM, public-ready, in this repo
 

@@ -1,9 +1,10 @@
 # `opencode-partial-compact` — v0 design
 
 Agent-driven partial context compaction for Opencode, as a single
-plugin. v0 is deliberately minimal in surface area: two tools
-(`partial_compact` and `partial_compact_instructions`), no
-peek/restore/list, no tag injection, and mutual exclusion with DCP. The
+plugin. v0 is deliberately minimal in surface area: three tools
+(`partial_compact`, `partial_compact_instructions`, and
+`partial_compact_current_session_message_ids`), no peek/restore/list,
+no tag injection, and mutual exclusion with DCP. The
 richer design that preceded it had a silent-failure bug in `pc_peek`
 that drove the cut. See the root README for current compatibility.
 
@@ -11,7 +12,7 @@ that drove the cut. See the root README for current compatibility.
 
 1. [`00-overview.md`](00-overview.md) — what and why.
 2. [`10-turn-log-model.md`](10-turn-log-model.md) — log vs view layers.
-3. [`20-agent-tools.md`](20-agent-tools.md) — `partial_compact` and its instruction tool.
+3. [`20-agent-tools.md`](20-agent-tools.md) — `partial_compact`, instructions, and message-ID helper tools.
 4. [`30-opencode-integration.md`](30-opencode-integration.md) — package
    shape, hook surface, install path.
 5. [`50-persistence.md`](50-persistence.md) — sidecar storage, native-compaction reconciliation.
@@ -51,6 +52,7 @@ Implemented and locally verified. Core runtime surfaces:
 
 - Server plugin: `src/plugin.ts` registers `partial_compact`,
   `partial_compact_instructions`,
+  `partial_compact_current_session_message_ids`,
   `experimental.chat.messages.transform`, and
   `experimental.chat.system.transform`.
 - TUI plugin: `src/tui.ts` registers `/partial_compact` and

@@ -1,18 +1,21 @@
 # Agent Tools (v0)
 
-Two tools. `partial_compact` matches the user-facing slash command while
+Three tools. `partial_compact` matches the user-facing slash command while
 remaining clear of oh-my-openagent and Opencode built-ins.
 `partial_compact_instructions` returns the named instruction block
 `opencode-partial-compact`; agents should read it before calling
-`partial_compact` if it is not already in the context window. The optional TUI
-entrypoint also registers `/partial_compact` and `/partial-compact`; the command
-opens a checkpoint picker and submits a prompt that includes the full
+`partial_compact` if it is not already in the context window.
+`partial_compact_current_session_message_ids` returns the current session's
+ordered visible `msg...` IDs after existing partial-compaction sidecars are
+applied. The optional TUI entrypoint also registers `/partial_compact` and
+`/partial-compact`; the command opens a checkpoint picker and submits a prompt
+that points at `partial_compact_instructions` rather than embedding the full
 instruction block.
 
 Older local checkouts exposed the same operation as `pc_compact`. New prompts
 and automation should call `partial_compact`; the old name is intentionally not
-registered as an alias so the model sees one compaction mutator plus one
-read-only instruction tool.
+registered as an alias so the model sees one compaction mutator plus read-only
+helper tools.
 
 ## `partial_compact`
 
@@ -55,12 +58,18 @@ context has actually accumulated.
 ## `partial_compact_instructions`
 
 Returns `<instruction name="opencode-partial-compact">...</instruction>`. The
-instruction explains why to compact, what to preserve, how to keep visible context below 50% and escalate cleanup at higher usage levels, how to retain important
-system/user prompt requirements while compacting pasted logs/tool output, and
-when to prefer one current-session `ranges` batch call.
-The tool also appends the current session's ordered `msg...` IDs so the agent
-has stable endpoints for current-session `from_message_id` / `to_message_id`
-message ranges without guessing.
+instruction explains why to compact, what to preserve, how to target staying
+below 50%, how to retain important system/user prompt requirements while
+compacting pasted logs/tool output, and when to prefer one current-session
+`ranges` batch call. It does not append message IDs; use
+`partial_compact_current_session_message_ids` for endpoint selection.
+
+## `partial_compact_current_session_message_ids`
+
+Returns the current session's ordered visible `msg...` IDs after existing
+partial-compaction sidecars are applied. The list is a snapshot; agents should
+use the newest list and refresh this tool after `partial_compact` or later turns
+before choosing endpoints.
 
 ## Periodic reminder
 
@@ -80,20 +89,19 @@ The reminder is a mandatory context-hygiene checkpoint, not a command to compact
 every time it appears. This plugin disables Opencode native auto-compaction in the merged runtime
 config, so the agent is responsible for keeping context healthy with
 `partial_compact` when there is context pressure or stale raw evidence that is not very likely to be useful soon.
-The reminder shows the estimated visible token count and, when available, the
-percentage of the effective budget in use: the conservative smaller of `limit.input` and `limit.context`. It escalates wording at 50%, 80%, and 90% so agents do not wait until native overflow. It points to `partial_compact_instructions` for the
-full named instruction block. The full guide is not repeated every cadence
-tick; the TUI slash command and `partial_compact_instructions` return the full
-block.
+The injected reminder text is intentionally just a compact status line, for example:
+
+```text
+current context window: 42k (37% full)
+```
+
+It does not repeat the full guide and does not append message IDs. Agents can call
+`partial_compact_instructions` for the full named instruction block and
+`partial_compact_current_session_message_ids` for current visible endpoints.
 The TUI slash command selects one checkpoint range and sends an agent prompt. It
 does not have a separate multi-range picker or automatic mode; if the agent sees
 additional disjoint stale ranges, it batches them through `partial_compact` with
 `ranges`.
-Every reminder also appends the current session history's ordered `msg...` IDs
-after existing partial-compaction sidecars are applied. The list is a snapshot;
-agents should use the newest list and refresh `partial_compact_instructions`
-after `partial_compact` or later turns before choosing endpoints.
-
 Agents should target staying below 50% visible context rather than waiting for overflow. They must not compact merely because a reminder appeared, but below 50% they should still compact after investigation, implementation, verification, review, commit, or push when stale context has low future value.
 Compact large diffs after commit, repeated status/diff/test output after
 results are known, resolved reviewer transcripts, failed probes after the

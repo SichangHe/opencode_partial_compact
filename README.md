@@ -7,27 +7,29 @@ checked against Opencode CLI 1.15.10 with `@opencode-ai/plugin`/
 
 ## What it does
 
-Exposes two tools:
+Exposes three tools:
 
 - `partial_compact_instructions()` returns the named instruction block
   `opencode-partial-compact`. Agents should read it before calling
   `partial_compact` if it is not already in their context window.
+- `partial_compact_current_session_message_ids()` returns the current session's
+  ordered visible `msg...` IDs after existing partial compactions are applied,
+  so agents can choose stable range endpoints without guessing.
 - `partial_compact(...)` lets the agent replace one contiguous current-session
   message range, or multiple disjoint current-session ranges, with short
   summaries it writes: `ranges: [{ from_message_id, to_message_id, summary }]`.
   Agents do not choose a session; the tool compacts only the current session.
 
 Periodic reminders tell the agent when the model-visible context has grown
-enough to warrant cleanup, using the conservative smaller of `limit.input` and `limit.context` when available and escalating wording at 50%, 80%, and 90% of that effective budget. The full tool and reminder contract lives in
-[`docs/20-agent-tools.md`](docs/20-agent-tools.md). Reminders are mandatory
-checkpoints that point to `partial_compact_instructions`; read that guide
-before compacting unless the named instruction is already in context. Reminders
-and `partial_compact_instructions` include the current session's ordered `msg...`
-IDs so agents can choose stable current-session range endpoints without guessing.
+enough to warrant cleanup. The injected reminder is intentionally terse, for
+example `current context window: 42k (37% full)`, using the conservative smaller
+of `limit.input` and `limit.context` when available. The full tool and reminder
+contract lives in [`docs/20-agent-tools.md`](docs/20-agent-tools.md).
 
 It also exposes a TUI slash command, `/partial_compact`, that lets the user pick
 the checkpoint to compact through. The command asks the agent to summarize that
-range with `partial_compact` and includes the full instruction block.
+range with `partial_compact` and includes a pointer to
+`partial_compact_instructions` rather than embedding the full instruction block.
 Older local checkouts exposed this agent tool as `pc_compact`; update any saved
 prompts or automation to call `partial_compact` instead.
 The originals remain in Opencode's session log; only the in-memory view sent to
@@ -102,7 +104,7 @@ effective context. This plugin sets `compaction.auto=false` through Opencode's c
 `reminder_interval_tokens` is the target reminder cadence. If the active model
 reports an input budget or context window smaller than that target, the runtime
 uses an internal safety interval of roughly 80% of that effective budget so
-mandatory reminders still appear before the window is exhausted. Reminder text uses the conservative smaller of `limit.input` and `limit.context` when available; when both are unknown, the configured target is used unchanged.
+mandatory reminders still appear before the window is exhausted. Reminder text uses the conservative smaller of `limit.input` and `limit.context` when available; when both are unknown, it reports `unknown% full` while preserving the compact status-line shape.
 
 ## Coexistence
 
