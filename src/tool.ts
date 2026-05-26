@@ -114,17 +114,29 @@ export function buildInstructionTool() {
       INSTRUCTION_POINTER: partialCompactInstructionPointer(),
     }),
     args: {},
-    async execute(_args, ctx) {
-      return partialCompactInstructionBlock() + "\n\n" + currentSessionMessageIDReference(ctx.sessionID, [])
+    async execute() {
+      return partialCompactInstructionBlock()
     },
   })
 }
 
-export function buildInstructionToolWithClient(client: CompactToolClient) {
+export function buildInstructionToolWithClient(_client: CompactToolClient) {
+  return buildInstructionTool()
+}
+
+export function buildCurrentSessionMessageIDsTool() {
   return tool({
-    description: renderPrompt(loadPrompt("partial-compact-instruction-tool-description.md"), {
-      INSTRUCTION_POINTER: partialCompactInstructionPointer(),
-    }),
+    description: loadPrompt("current-session-message-ids-tool-description.md"),
+    args: {},
+    async execute(_args, ctx) {
+      return currentSessionMessageIDReference(ctx.sessionID, [])
+    },
+  })
+}
+
+export function buildCurrentSessionMessageIDsToolWithClient(client: CompactToolClient) {
+  return tool({
+    description: loadPrompt("current-session-message-ids-tool-description.md"),
     args: {},
     async execute(_args, ctx) {
       try {
@@ -134,10 +146,10 @@ export function buildInstructionToolWithClient(client: CompactToolClient) {
         })
         const visible = (resp.data ?? []).map(msg => ({ info: msg.info, parts: [...msg.parts] }))
         applyCompactions(visible, (await loadState(ctx.sessionID)).compactions)
-        return partialCompactInstructionBlock() + "\n\n" + currentSessionMessageIDReference(ctx.sessionID, visible)
+        return currentSessionMessageIDReference(ctx.sessionID, visible)
       } catch (err) {
-        debugLog(`partial_compact_instructions could not load message IDs for ${ctx.sessionID}: ${String(err)}`)
-        return partialCompactInstructionBlock() + "\n\n" + currentSessionMessageIDReference(ctx.sessionID, [])
+        debugLog(`partial_compact_current_session_message_ids could not load message IDs for ${ctx.sessionID}: ${String(err)}`)
+        return currentSessionMessageIDReference(ctx.sessionID, [])
       }
     },
   })

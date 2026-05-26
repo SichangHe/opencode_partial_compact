@@ -6,7 +6,7 @@ import type { PluginInput } from "@opencode-ai/plugin"
 import type { ToolContext } from "@opencode-ai/plugin/tool"
 import type { Part } from "@opencode-ai/sdk"
 import { server } from "../src/plugin"
-import { buildCompactTool, buildInstructionTool, buildInstructionToolWithClient, type CompactToolClient } from "../src/tool"
+import { buildCompactTool, buildCurrentSessionMessageIDsTool, buildCurrentSessionMessageIDsToolWithClient, buildInstructionTool, buildInstructionToolWithClient, type CompactToolClient } from "../src/tool"
 import { loadState, _clearCache, _setStorageDir } from "../src/state"
 import { estimateVisibleTokens, maybeInjectReminder } from "../src/reminder"
 import { applyCompactions } from "../src/hook"
@@ -245,29 +245,50 @@ describe("partial_compact tool", () => {
 
     expect(output).toContain("<instruction name=\"opencode-partial-compact\">")
     expect(output).toContain("Partial compaction replaces no-longer-needed messages")
+    expect(output).not.toContain("Current-session message IDs for `partial_compact`")
   })
 
-  it("returns current-session message IDs with the instruction block when client-backed", async () => {
+  it("keeps the client-backed instruction tool documentation-only", async () => {
     const instructionTool = buildInstructionToolWithClient(client())
     const raw = await instructionTool.execute({}, context())
     const output = typeof raw === "string" ? raw : raw.output
 
     expect(output).toContain("<instruction name=\"opencode-partial-compact\">")
-    expect(output).toContain("Current-session message IDs for `partial_compact`")
-    expect(output).toContain("msg01A, msg01B, msg01C, msg01D")
+    expect(output).not.toContain("Current-session message IDs for `partial_compact`")
+    expect(output).not.toContain("msg01A, msg01B, msg01C, msg01D")
   })
 
-  it("returns instructions when current-session message IDs cannot be loaded", async () => {
+  it("returns current-session message IDs from the dedicated tool when client-backed", async () => {
+    const messageIDsTool = buildCurrentSessionMessageIDsToolWithClient(client())
+    const raw = await messageIDsTool.execute({}, context())
+    const output = typeof raw === "string" ? raw : raw.output
+
+    expect(output).toContain("Current-session message IDs for `partial_compact`")
+    expect(output).toContain("msg01A, msg01B, msg01C, msg01D")
+    expect(output).not.toContain("<instruction name=\"opencode-partial-compact\">")
+  })
+
+  it("returns an empty current-session message ID list when the dedicated tool has no client", async () => {
+    const messageIDsTool = buildCurrentSessionMessageIDsTool()
+    const raw = await messageIDsTool.execute({}, context())
+    const output = typeof raw === "string" ? raw : raw.output
+
+    expect(output).toContain("Current-session message IDs for `partial_compact`")
+    expect(output).toContain("No current-session message IDs are available yet")
+    expect(output).not.toContain("<instruction name=\"opencode-partial-compact\">")
+  })
+
+  it("returns an empty current-session message ID list when messages cannot be loaded", async () => {
     const failingClient: CompactToolClient = {
       session: {
         messages: async () => { throw new Error("session unavailable") },
       },
     }
-    const instructionTool = buildInstructionToolWithClient(failingClient)
-    const raw = await instructionTool.execute({}, context())
+    const messageIDsTool = buildCurrentSessionMessageIDsToolWithClient(failingClient)
+    const raw = await messageIDsTool.execute({}, context())
     const output = typeof raw === "string" ? raw : raw.output
 
-    expect(output).toContain("<instruction name=\"opencode-partial-compact\">")
+    expect(output).not.toContain("<instruction name=\"opencode-partial-compact\">")
     expect(output).toContain("No current-session message IDs are available yet")
   })
 
@@ -276,8 +297,8 @@ describe("partial_compact tool", () => {
       info: { id: `msg${String(idx).padStart(3, "0")}`, sessionID: sid },
       parts: [] as Part[],
     }))
-    const instructionTool = buildInstructionToolWithClient(clientWith(manyMessages))
-    const raw = await instructionTool.execute({}, context())
+    const messageIDsTool = buildCurrentSessionMessageIDsToolWithClient(clientWith(manyMessages))
+    const raw = await messageIDsTool.execute({}, context())
     const output = typeof raw === "string" ? raw : raw.output
 
     expect(output).toContain("34 older middle IDs omitted")
@@ -286,7 +307,7 @@ describe("partial_compact tool", () => {
     expect(output).not.toContain("msg030")
   })
 
-  it("registers the client-backed instruction tool from the plugin server", async () => {
+  it("registers separate instruction and message-ID tools from the plugin server", async () => {
     const projectDir = join(tempDir, "project")
     const configDir = join(projectDir, ".opencode")
     await mkdir(configDir, { recursive: true })
@@ -294,10 +315,14 @@ describe("partial_compact tool", () => {
     const hooks = await server(pluginInput(projectDir))
     if (!hooks.tool) throw new Error("expected plugin server to register tools")
     const raw = await hooks.tool.partial_compact_instructions.execute({}, context())
-    const output = typeof raw === "string" ? raw : raw.output
+    const instructionOutput = typeof raw === "string" ? raw : raw.output
+    const idsRaw = await hooks.tool.partial_compact_current_session_message_ids.execute({}, context())
+    const idsOutput = typeof idsRaw === "string" ? idsRaw : idsRaw.output
 
-    expect(output).toContain("Current-session message IDs for `partial_compact`")
-    expect(output).toContain("msg01A, msg01B, msg01C, msg01D")
+    expect(instructionOutput).toContain("<instruction name=\"opencode-partial-compact\">")
+    expect(instructionOutput).not.toContain("Current-session message IDs for `partial_compact`")
+    expect(idsOutput).toContain("Current-session message IDs for `partial_compact`")
+    expect(idsOutput).toContain("msg01A, msg01B, msg01C, msg01D")
   })
 
   it("omits message IDs hidden by existing current-session compactions", async () => {
@@ -313,8 +338,8 @@ describe("partial_compact tool", () => {
       ranges: [{ from_message_id: "msg01A", to_message_id: "msg01B", summary: "old range already compacted" }],
     }, context())
 
-    const instructionTool = buildInstructionToolWithClient(client())
-    const raw = await instructionTool.execute({}, context())
+    const messageIDsTool = buildCurrentSessionMessageIDsToolWithClient(client())
+    const raw = await messageIDsTool.execute({}, context())
     const output = typeof raw === "string" ? raw : raw.output
 
     expect(output).toContain("msg01C, msg01D")
