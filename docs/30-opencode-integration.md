@@ -16,7 +16,7 @@ opencode-partial-compact/
     plugin.ts         # server() body
     hook.ts           # messages.transform handler
     reminder.ts       # system reminder cadence + visible-token estimate
-    tool.ts           # partial_compact + instruction tool definitions
+    tool.ts           # partial_compact + read-only helper tool definitions
     instructions.ts   # prompt accessors
     prompt-loader.ts  # Markdown prompt loader + renderer
     prompts/          # Markdown prompt source files copied to dist/prompts
@@ -47,7 +47,7 @@ export default mod
 
 ```ts
 {
-  tool: { partial_compact: ..., partial_compact_instructions: ... },
+  tool: { partial_compact: ..., partial_compact_instructions: ..., partial_compact_current_session_message_ids: ... },
   "experimental.chat.messages.transform": handler,
   "experimental.chat.system.transform": reminderHandler,
 }
@@ -94,15 +94,17 @@ we error out if the plugin order is wrong.
 
 ## Hooks we consume
 
-- `Hooks.tool` — register `partial_compact` and the read-only
-  `partial_compact_instructions` guide tool.
+- `Hooks.tool` — register `partial_compact` plus the read-only
+  `partial_compact_instructions` and `partial_compact_current_session_message_ids`
+  helper tools.
 - `experimental.chat.messages.transform` — rewrite the view.
 - `experimental.chat.system.transform` — inject a mandatory partial-compaction
-  reminder after visible context grows. The reminder reports the estimated
-  visible context size, includes context-window percentage when available, targets staying below 50%, and
-  points to the named instruction so agents can review the full compaction
-  policy before choosing ranges. It also appends ordered current-session `msg...` IDs after existing
-  partial compactions are applied. `reminder_interval_tokens` remains the
+  reminder after visible context grows. The reminder is intentionally compact:
+  `current context window: XXk (yy% full)`. Agents can call
+  `partial_compact_instructions` for the full compaction policy and
+  `partial_compact_current_session_message_ids` for ordered current-session
+  `msg...` IDs after existing partial compactions are applied.
+  `reminder_interval_tokens` remains the
   configured target cadence; when a known model context window is smaller than
   that target, the runtime clamps the effective interval to an internal ~80%
   safety point.

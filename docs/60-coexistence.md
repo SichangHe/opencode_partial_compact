@@ -46,7 +46,7 @@ If oh-my-openagent isn't present, no check.
 
 ## Tool name collisions
 
-Avoided. Our tools are `partial_compact` and `partial_compact_instructions`.
+Avoided. Our tools are `partial_compact`, `partial_compact_instructions`, and `partial_compact_current_session_message_ids`.
 Reserved by oh-my-openagent
 (per discovery report): `grep`, `glob`, `skill`, `task`, `edit`,
 `look_at`, `lsp_*`, `ast_grep_*`, `session_*`, `background_*`,
