@@ -45,12 +45,9 @@ describe("partial compact reminders", () => {
     })
 
     expect(output.system).toEqual([reminderTextWithMessageIDs({ sessionID: sid, tokenEstimate, messages, model: { limit: { context: 10000 } } })])
-    expect(output.system[0]).toContain("Routine hygiene")
-    expect(output.system[0]).toContain("partial_compact_instructions")
-    expect(output.system[0]).toContain("Current-session message IDs")
-    expect(output.system[0]).toContain("msg01A, msg01B")
+    expect(output.system[0]).toMatch(/^current context window: [0-9.]+k \(\d+% full\)$/)
+    expect(output.system[0]).not.toContain("Current-session message IDs")
     expect(output.system[0]).not.toContain("<instruction name=\"opencode-partial-compact\">")
-    expect(output.system[0]).toContain("% of the context window")
     const state = await loadState(sid)
     expect(state.last_reminder?.message_id).toBe("msg01B")
   })
@@ -111,7 +108,7 @@ describe("partial compact reminders", () => {
     })
 
     expect(output.system).toHaveLength(1)
-    expect(output.system[0]).toContain("msg01A, msg01C")
+    expect(output.system[0]).toMatch(/^current context window: [0-9.]+k \(\d+% full\)$/)
     expect(output.system[0]).not.toContain("msg01B")
   })
 
@@ -226,10 +223,8 @@ describe("partial compact reminders", () => {
 
     expect(tokenEstimate).toBeGreaterThan(260000)
     expect(tokenEstimate).toBeLessThan(280000)
-    expect(output.system[0]).toContain("High usage")
-    expect(output.system[0]).not.toContain("Urgent")
-    expect(output.system[0]).not.toContain("Critical")
-    expect(output.system[0]).toContain("msg01H, msg01I")
+    expect(output.system[0]).toContain("current context window:")
+    expect(output.system[0]).toContain("% full")
   })
 
   it("reports usage against the explicit input budget when present", async () => {
@@ -243,19 +238,18 @@ describe("partial compact reminders", () => {
       cfg: { reminder_enabled: true, reminder_interval_tokens: 100 },
     })
 
-    expect(output.system[0]).toContain("% of the effective input/context budget")
-    expect(output.system[0]).toContain("Routine hygiene")
-    expect(output.system[0]).toContain("message-ID snapshot below is usually enough")
-    expect(output.system[0]).toContain("msg01A, msg01B")
+    expect(output.system[0]).toContain("current context window:")
+    expect(output.system[0]).toContain("% full")
+    expect(output.system[0]).not.toContain("effective input/context budget")
   })
 
-  it("escalates reminder wording above 50, 80, and 90 percent", () => {
+  it("reports compact context-window usage above 50, 80, and 90 percent", () => {
     expect(reminderText({ tokenEstimate: 6000, model: { limit: { input: 10000, context: 400000 } } }))
-      .toContain("High usage")
+      .toBe("current context window: 6k (60% full)")
     expect(reminderText({ tokenEstimate: 8500, model: { limit: { input: 10000, context: 400000 } } }))
-      .toContain("Urgent")
+      .toBe("current context window: 8.5k (85% full)")
     expect(reminderText({ tokenEstimate: 9500, model: { limit: { input: 10000, context: 400000 } } }))
-      .toContain("Critical")
+      .toBe("current context window: 9.5k (95% full)")
   })
 
 
@@ -281,7 +275,7 @@ describe("partial compact reminders", () => {
     })
 
     expect(estimateVisibleTokens(thresholdMessages)).toBeLessThan(8000)
-    expect(output.system[0]).toContain("High usage")
+    expect(output.system[0]).toContain("current context window:")
   })
 
   it("emits again when crossing a higher usage threshold before another full interval", async () => {
@@ -307,14 +301,12 @@ describe("partial compact reminders", () => {
 
     expect(effectiveReminderInterval(16000, { limit: { input: 10000, context: 400000 } })).toBe(8000)
     expect(estimateVisibleTokens(thresholdMessages)).toBeLessThan(14000)
-    expect(output.system[0]).toContain("Urgent")
+    expect(output.system[0]).toContain("current context window:")
   })
 
   it("falls back to a token-only estimate when the model context limit is unavailable", () => {
     const text = reminderText({ tokenEstimate: 1234 })
 
-    expect(text).toContain("estimated visible context: ~1234 tokens")
-    expect(text).toContain("Call `partial_compact_instructions` first")
-    expect(text).not.toContain("% of the context window")
+    expect(text).toBe("current context window: 1.2k (unknown% full)")
   })
 })
