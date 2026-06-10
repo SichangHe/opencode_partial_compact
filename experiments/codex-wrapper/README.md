@@ -1,0 +1,32 @@
+# codex wrapper partial compaction poc
+
+- goal
+  - prove the controller-side path for Codex partial compaction
+  - keep official Codex app-server as the intended model/turn boundary
+  - avoid forking Codex
+- core idea
+  - the wrapper records every message in a sidecar ledger
+  - every visible message receives a stable `msg...` id
+  - the wrapper renders the next turn context from the ledger
+  - compaction records replace old message ranges with summaries in that rendered context
+- app-server boundary
+  - `AgentAdapter` is the seam for `codex app-server`
+  - `MockCodexAdapter` is deterministic for tests and receipts
+  - the demo initializes real `codex app-server`
+  - the demo starts an ephemeral thread and injects one curated context item with `thread/inject_items`
+  - `probe:schema` generates local app-server protocol bindings for the installed Codex version
+- demo
+  - `bun run demo`
+  - runs a scripted agent task against `fixtures/demo-repo`
+  - records discovery messages
+  - calls `partial_compact` over stale discovery context
+  - continues with the compacted visible context
+  - writes receipts under `runs/latest`
+- evidence
+  - `visible-before-compaction.txt` contains stale raw context
+  - `visible-after-compaction.txt` contains the summary and omits stale raw context
+  - `final-report.md` proves the agent finished after compaction
+- limits
+  - the mock adapter proves wrapper semantics
+  - a live Codex adapter still needs generated protocol binding and auth-safe smoke testing
+  - hidden Codex thread state transfer remains unknown

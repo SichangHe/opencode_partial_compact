@@ -1,0 +1,4 @@
+2025-03-04T10:00:00Z staging retry storm investigation
+legacy marker: STALE_LEGACY_AUDIT_BLOCK
+The old staging proxy retried all requests after 30 seconds. This file is not
+from production and should not drive the final answer.

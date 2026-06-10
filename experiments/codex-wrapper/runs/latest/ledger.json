@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "session_id": "codex-wrapper-demo",
+  "messages": [
+    {
+      "id": "msg000001",
+      "role": "user",
+      "text": "Find the production payment API timeout problem and recommend the smallest safe fix.",
+      "created_at_iso": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "msg000002",
+      "role": "assistant",
+      "text": "I will inspect stale overview material first, then production configuration.",
+      "created_at_iso": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "msg000003",
+      "role": "tool",
+      "text": "read_file README.md\n\n# demo service\n\nThis repository contains a small payment API. The README is intentionally stale:\nit still says the old staging timeout is `30000ms`.\n",
+      "created_at_iso": "1970-01-01T00:00:00.000Z",
+      "source": "tool:01-discovery"
+    },
+    {
+      "id": "msg000004",
+      "role": "tool",
+      "text": "read_file logs/legacy-audit.txt\n\n2025-03-04T10:00:00Z staging retry storm investigation\nlegacy marker: STALE_LEGACY_AUDIT_BLOCK\nThe old staging proxy retried all requests after 30 seconds. This file is not\nfrom production and should not drive the final answer.\n",
+      "created_at_iso": "1970-01-01T00:00:00.000Z",
+      "source": "tool:01-discovery"
+    },
+    {
+      "id": "msg000005",
+      "role": "tool",
+      "text": "read_file config/production.json\n\n{\n  \"service\": \"payments\",\n  \"requestTimeoutMs\": 12000,\n  \"upstreamDeadlineMs\": 9000\n}\n",
+      "created_at_iso": "1970-01-01T00:00:00.000Z",
+      "source": "tool:01-discovery"
+    },
+    {
+      "id": "msg000006",
+      "role": "assistant",
+      "text": "The README and legacy audit log are stale. I will compact that discovery context before continuing.",
+      "created_at_iso": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "msg000007",
+      "role": "tool",
+      "text": "current visible ids: msg000001, msg000002, msg000003, msg000004, msg000005, msg000006",
+      "created_at_iso": "1970-01-01T00:00:00.000Z",
+      "source": "tool:02-compact"
+    },
+    {
+      "id": "msg000008",
+      "role": "tool",
+      "text": "partial_compact result: {\"ok\":true,\"record\":{\"id\":\"cmp000001\",\"from_message_id\":\"msg000002\",\"to_message_id\":\"msg000004\",\"summary\":\"stale discovery: checked README and legacy staging audit log; both mention old 30000ms staging behavior and are not production evidence. Kept production config outside this compacted range.\",\"created_at_iso\":\"1970-01-01T00:00:00.000Z\",\"n_messages_replaced\":3},\"visible_message_ids\":[\"msg000001\",\"cmp000001\",\"msg000005\",\"msg000006\",\"msg000007\"]}",
+      "created_at_iso": "1970-01-01T00:00:00.000Z",
+      "source": "tool:02-compact"
+    },
+    {
+      "id": "msg000009",
+      "role": "system",
+      "text": "codex app-server curated-context injection probe: ok; userAgent=opc_partial_compact_probe/0.139.0 (Ubuntu 22.4.0; x86_64) tmux/3.6a (opc_partial_compact_probe; 0.1.0); platform=unix/linux; itemsInjected=1",
+      "created_at_iso": "1970-01-01T00:00:00.000Z",
+      "source": "wrapper"
+    },
+    {
+      "id": "msg00000A",
+      "role": "assistant",
+      "text": "Compaction is active; the stale raw audit block is absent from my visible context. I will inspect the production error and code default.",
+      "created_at_iso": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "msg00000B",
+      "role": "tool",
+      "text": "read_file logs/prod-error.txt\n\n2026-06-09T18:14:22Z production payment-api request failed after 9012ms\n2026-06-09T18:14:22Z upstream closed connection before app timeout fired\n",
+      "created_at_iso": "1970-01-01T00:00:00.000Z",
+      "source": "tool:03-continue"
+    },
+    {
+      "id": "msg00000C",
+      "role": "tool",
+      "text": "read_file src/payment-api.ts\n\nexport const DEFAULT_PAYMENT_TIMEOUT_MS = 8000\n\nexport function effectivePaymentTimeoutMs(envValue: number | undefined): number {\n  return envValue ?? DEFAULT_PAYMENT_TIMEOUT_MS\n}\n",
+      "created_at_iso": "1970-01-01T00:00:00.000Z",
+      "source": "tool:03-continue"
+    },
+    {
+      "id": "msg00000D",
+      "role": "assistant",
+      "text": "Diagnosis: production config sets `requestTimeoutMs` to 12000 while the upstream deadline is 9000.\nThe production log shows the upstream closes around 9012ms before the app timeout fires.\nThe code default is 8000, so the regression is the production override, not the code default.\nRecommended fix: set the production payment timeout below 9000ms, for example 8000ms.",
+      "created_at_iso": "1970-01-01T00:00:00.000Z"
+    }
+  ],
+  "compactions": [
+    {
+      "id": "cmp000001",
+      "from_message_id": "msg000002",
+      "to_message_id": "msg000004",
+      "summary": "stale discovery: checked README and legacy staging audit log; both mention old 30000ms staging behavior and are not production evidence. Kept production config outside this compacted range.",
+      "created_at_iso": "1970-01-01T00:00:00.000Z",
+      "n_messages_replaced": 3
+    }
+  ],
+  "visible_message_ids": [
+    "msg000001",
+    "cmp000001",
+    "msg000005",
+    "msg000006",
+    "msg000007",
+    "msg000008",
+    "msg000009",
+    "msg00000A",
+    "msg00000B",
+    "msg00000C",
+    "msg00000D"
+  ]
+}

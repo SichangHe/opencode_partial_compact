@@ -1,0 +1,18 @@
+{
+  "name": "codex-partial-compact-wrapper-poc",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Proof-of-concept Codex app-server wrapper for message-ID partial compaction.",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "demo": "bun run src/demo.ts",
+    "probe:schema": "rm -rf runs/app-server-schema && codex app-server generate-ts --experimental --out runs/app-server-schema"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.19",
+    "typescript": "^6.0.3"
+  }
+}

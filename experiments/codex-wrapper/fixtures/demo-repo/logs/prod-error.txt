@@ -1,0 +1,2 @@
+2026-06-09T18:14:22Z production payment-api request failed after 9012ms
+2026-06-09T18:14:22Z upstream closed connection before app timeout fired

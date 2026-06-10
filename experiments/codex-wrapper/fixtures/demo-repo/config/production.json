@@ -1,0 +1,5 @@
+{
+  "service": "payments",
+  "requestTimeoutMs": 12000,
+  "upstreamDeadlineMs": 9000
+}
