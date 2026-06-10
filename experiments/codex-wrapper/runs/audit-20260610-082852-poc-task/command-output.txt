@@ -1,0 +1,24 @@
+run_id=audit-20260610-082852-poc-task
+tmux_window=opc:codex-followup-082618
+task=diagnose demo-repo production payment timeout, compact stale discovery, continue after compaction
+
+[test] bun test
+bun test v1.3.4 (5eb2145b)
+
+test/ledger.test.ts:
+(pass) WrapperLedger > injects message ids and replaces compacted ranges with summaries [0.99ms]
+(pass) WrapperLedger > rejects overlapping ranges [0.10ms]
+(pass) demo > continues after partial compaction and writes receipts [846.29ms]
+
+ 3 pass
+ 0 fail
+ 13 expect() calls
+Ran 3 tests across 1 file. [869.00ms]
+
+[demo] bun run demo
+$ bun run src/demo.ts
+demo receipts written to runs/latest
+
+[live-smoke] bun run smoke:live-turn
+
+audit_dir=runs/audit-20260610-082852-poc-task

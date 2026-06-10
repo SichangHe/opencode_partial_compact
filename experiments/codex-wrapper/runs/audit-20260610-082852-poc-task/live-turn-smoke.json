@@ -1,0 +1,7 @@
+$ bun run src/live-turn-smoke.ts
+{
+  "ok": true,
+  "status": "completed",
+  "assistant": "Set `requestTimeoutMs` to no more than `upstreamDeadlineMs`—e.g., change it from `12000` to `9000` ms.",
+  "n_items_injected": 1
+}
