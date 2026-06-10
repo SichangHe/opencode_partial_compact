@@ -5,6 +5,8 @@ type JsonRpcResponse = {
   id?: unknown
   result?: unknown
   error?: { message?: unknown }
+  method?: unknown
+  params?: unknown
 }
 
 type PendingRequest = {
@@ -12,6 +14,8 @@ type PendingRequest = {
   reject: (err: Error) => void
   method: string
 }
+
+type NotificationHandler = (method: string, params: unknown) => void
 
 export type CodexContextInjectionProbe = {
   ok: true
@@ -23,6 +27,17 @@ export type CodexContextInjectionProbe = {
   error: string
 }
 
+export type CodexLiveTurnSmoke = {
+  ok: true
+  status: string
+  assistant: string
+  n_items_injected: number
+} | {
+  ok: false
+  error: string
+  assistant: string
+}
+
 class CodexAppServerStdio {
   #proc = spawn("codex", ["app-server", "--listen", "stdio://"], {
     stdio: ["pipe", "pipe", "pipe"],
@@ -32,8 +47,10 @@ class CodexAppServerStdio {
   #next_id = 1
   #stderr = ""
   #closed = false
+  #on_notification: NotificationHandler | undefined
 
-  constructor() {
+  constructor(on_notification?: NotificationHandler) {
+    this.#on_notification = on_notification
     this.#proc.stderr.on("data", chunk => {
       this.#stderr += String(chunk)
     })
@@ -77,7 +94,10 @@ class CodexAppServerStdio {
       this.#rejectAll(new Error(`invalid app-server json: ${line}`))
       return
     }
-    if (typeof msg.id !== "number") return
+    if (typeof msg.id !== "number") {
+      if (typeof msg.method === "string") this.#on_notification?.(msg.method, msg.params)
+      return
+    }
     const pending = this.#pending.get(msg.id)
     if (!pending) return
     this.#pending.delete(msg.id)
@@ -138,6 +158,63 @@ export async function probeCuratedContextInjection(
   }
 }
 
+export async function runCuratedLiveTurnSmoke(
+  visible_context: string,
+  prompt: string,
+  timeout_ms = 90000,
+): Promise<CodexLiveTurnSmoke> {
+  let assistant = ""
+  let completeTurn: (turn: unknown) => void = () => {}
+  const completed = new Promise<unknown>(resolve => {
+    completeTurn = resolve
+  })
+  const client = new CodexAppServerStdio((method, params) => {
+    if (method === "item/agentMessage/delta") {
+      assistant += String((params as { delta?: unknown }).delta ?? "")
+    }
+    if (method === "turn/completed") {
+      completeTurn((params as { turn?: unknown }).turn)
+    }
+  })
+  const timer = AbortSignal.timeout(timeout_ms)
+  try {
+    await withTimeout(client.request("initialize", {
+      clientInfo: {
+        name: "opc_partial_compact_live_probe",
+        title: "OPC Partial Compact Live Probe",
+        version: "0.1.0",
+      },
+      capabilities: { experimentalApi: true },
+    }), timer)
+    client.notify("initialized", {})
+    const thread = parseThreadStartResult(await withTimeout(client.request("thread/start", {
+      ephemeral: true,
+      cwd: process.cwd(),
+      baseInstructions: "You are a concise coding assistant.",
+      developerInstructions: "Use injected curated context as prior conversation state.",
+    }), timer))
+    const items = [{
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: visible_context }],
+    }]
+    await withTimeout(client.request("thread/inject_items", { threadId: thread.thread_id, items }), timer)
+    await withTimeout(client.request("turn/start", {
+      threadId: thread.thread_id,
+      input: [{ type: "text", text: prompt, text_elements: [] }],
+    }), timer)
+    const turn = parseTurn(await withTimeout(completed, timer))
+    if (turn.status !== "completed") {
+      return { ok: false, error: `turn status ${turn.status}`, assistant }
+    }
+    return { ok: true, status: turn.status, assistant, n_items_injected: items.length }
+  } catch (err) {
+    return { ok: false, error: sanitizeError(String((err as Error).message ?? err)), assistant }
+  } finally {
+    client.close()
+  }
+}
+
 async function withTimeout<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) throw new Error("codex app-server probe timed out")
   return await new Promise((resolve, reject) => {
@@ -168,6 +245,12 @@ function parseThreadStartResult(raw: unknown): { thread_id: string } {
   const msg = raw as { thread?: { id?: unknown } }
   if (typeof msg.thread?.id !== "string") throw new Error("thread/start response omitted thread.id")
   return { thread_id: msg.thread.id }
+}
+
+function parseTurn(raw: unknown): { status: string } {
+  const msg = raw as { status?: unknown }
+  if (typeof msg.status !== "string") throw new Error("turn/completed omitted status")
+  return { status: msg.status }
 }
 
 function sanitizeError(message: string): string {

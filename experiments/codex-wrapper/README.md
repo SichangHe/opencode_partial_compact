@@ -22,11 +22,17 @@
   - calls `partial_compact` over stale discovery context
   - continues with the compacted visible context
   - writes receipts under `runs/latest`
+- live smoke
+  - `bun run smoke:live-turn`
+  - starts real `codex app-server`
+  - injects a compacted context item
+  - starts one live Codex turn
+  - calls a model and is intentionally not part of default tests
 - evidence
   - `visible-before-compaction.txt` contains stale raw context
   - `visible-after-compaction.txt` contains the summary and omits stale raw context
   - `final-report.md` proves the agent finished after compaction
 - limits
   - the mock adapter proves wrapper semantics
-  - a live Codex adapter still needs generated protocol binding and auth-safe smoke testing
+  - the live smoke proves the app-server turn path but is nondeterministic
   - hidden Codex thread state transfer remains unknown

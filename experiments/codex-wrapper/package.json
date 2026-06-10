@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "demo": "bun run src/demo.ts",
+    "smoke:live-turn": "bun run src/live-turn-smoke.ts",
     "probe:schema": "rm -rf runs/app-server-schema && codex app-server generate-ts --experimental --out runs/app-server-schema"
   },
   "devDependencies": {
