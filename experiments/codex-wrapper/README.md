@@ -32,6 +32,8 @@
   - `pcodx` launches normal Codex with the `pcodx_partial_compact` MCP server
   - tools exposed by that server are `partial_compact_instructions`, `partial_compact_record_message`, `partial_compact_current_session_message_ids`, and `partial_compact`
   - the MCP server writes a sidecar ledger at `PCODX_LEDGER_PATH`, defaulting under `/tmp/pcodx-runs`
+  - `partial_compact_instructions` tells workers to treat partial compaction as expected context hygiene, record compactable working memory early, and compact on concrete triggers
+  - concrete triggers include before manager compact/resume requests, before new broad exploration/verifier loops when prior recorded context is stale, after commit/push/report phases, after roughly 10 substantive tool or command results without compaction, or whenever context feels crowded enough to slow reasoning
   - `bun run smoke:mcp` verifies the server tool list and records a real compaction in a ledger
   - this path gives a normal pcodx worker a callable partial-compaction mechanism, but it still does not rewrite Codex's hidden native transcript
 - evidence
