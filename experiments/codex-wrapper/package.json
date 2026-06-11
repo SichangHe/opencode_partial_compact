@@ -9,11 +9,17 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "demo": "bun run src/demo.ts",
+    "mcp:server": "bun run src/mcp-server.ts",
     "smoke:live-turn": "bun run src/live-turn-smoke.ts",
+    "smoke:mcp": "bun run src/mcp-smoke.ts",
     "probe:schema": "rm -rf runs/app-server-schema && codex app-server generate-ts --experimental --out runs/app-server-schema"
   },
   "devDependencies": {
     "@types/node": "^22.19.19",
     "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
   }
 }

@@ -28,6 +28,12 @@
   - injects a compacted context item
   - starts one live Codex turn
   - calls a model and is intentionally not part of default tests
+- pcodx MCP worker path
+  - `pcodx` launches normal Codex with the `pcodx_partial_compact` MCP server
+  - tools exposed by that server are `partial_compact_instructions`, `partial_compact_record_message`, `partial_compact_current_session_message_ids`, and `partial_compact`
+  - the MCP server writes a sidecar ledger at `PCODX_LEDGER_PATH`, defaulting under `/tmp/pcodx-runs`
+  - `bun run smoke:mcp` verifies the server tool list and records a real compaction in a ledger
+  - this path gives a normal pcodx worker a callable partial-compaction mechanism, but it still does not rewrite Codex's hidden native transcript
 - evidence
   - `visible-before-compaction.txt` contains stale raw context
   - `visible-after-compaction.txt` contains the summary and omits stale raw context
