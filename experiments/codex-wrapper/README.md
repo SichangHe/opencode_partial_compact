@@ -32,9 +32,13 @@
   - `pcodx` launches normal Codex with the `pcodx_partial_compact` MCP server
   - tools exposed by that server are `partial_compact_instructions`, `partial_compact_record_message`, `partial_compact_current_session_message_ids`, and `partial_compact`
   - the MCP server writes a sidecar ledger at `PCODX_LEDGER_PATH`, defaulting under `/tmp/pcodx-runs`
-  - `partial_compact_instructions` tells workers to treat partial compaction as expected context hygiene, record compactable working memory early, and compact on concrete triggers
+  - `src/pcodx-instructions.ts` is the shared startup/tool instruction source for workers
+  - `partial_compact_instructions` returns the same text that `pcodx` injects at session start
+  - workers are told to treat partial compaction as expected context hygiene, record compactable working memory early, and compact on concrete triggers
   - concrete triggers include before manager compact/resume requests, before new broad exploration/verifier loops when prior recorded context is stale, after commit/push/report phases, after roughly 10 substantive tool or command results without compaction, or whenever context feels crowded enough to slow reasoning
+  - context-window size reminders are currently static instructions to watch Codex's context-used/status indicator; no dynamic MCP reminder exists because the server cannot read Codex's hidden native context usage
   - `bun run smoke:mcp` verifies the server tool list and records a real compaction in a ledger
+  - `bun run smoke:pcodx-startup` verifies Codex receives the shared text through `developer_instructions`
   - this path gives a normal pcodx worker a callable partial-compaction mechanism, but it still does not rewrite Codex's hidden native transcript
 - evidence
   - `visible-before-compaction.txt` contains stale raw context

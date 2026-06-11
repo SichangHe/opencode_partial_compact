@@ -12,6 +12,7 @@
     "mcp:server": "bun run src/mcp-server.ts",
     "smoke:live-turn": "bun run src/live-turn-smoke.ts",
     "smoke:mcp": "bun run src/mcp-smoke.ts",
+    "smoke:pcodx-startup": "bun run src/pcodx-startup-smoke.ts",
     "probe:schema": "rm -rf runs/app-server-schema && codex app-server generate-ts --experimental --out runs/app-server-schema"
   },
   "devDependencies": {

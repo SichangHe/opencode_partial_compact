@@ -54,7 +54,7 @@ try {
   }
   const instructions = await client.callTool({ name: "partial_compact_instructions", arguments: {} })
   const instructions_text = tool_text(instructions)
-  for (const expected of ["expected context hygiene", "Expected triggers", "roughly 10 substantive tool or command results"]) {
+  for (const expected of ["expected context hygiene", "Expected triggers", "roughly 10 substantive tool or command results", "Context-window reminder"]) {
     if (!instructions_text.includes(expected)) throw new Error(`missing instruction text: ${expected}`)
   }
   await client.callTool({
