@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test"
 import { WrapperLedger } from "../src/ledger.js"
 import { runDemo } from "../src/demo.js"
+import {
+  CONTEXT_WINDOW_REMINDER_CONTEXT_KEY,
+  ContextWindowReminderTracker,
+  renderContextWindowReminder,
+} from "../src/app-server-adapter.js"
 import { readFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -62,5 +67,69 @@ describe("demo", () => {
     expect(after).not.toContain("STALE_LEGACY_AUDIT_BLOCK")
     expect(finalReport).toContain("production config sets `requestTimeoutMs` to 12000")
     expect(finalReport).toContain("Recommended fix")
+  })
+})
+
+describe("context window reminders", () => {
+  it("renders app-server token usage as turn additional context", () => {
+    const tracker = new ContextWindowReminderTracker()
+    const event = tracker.observe("thread/tokenUsage/updated", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      tokenUsage: {
+        total: {
+          totalTokens: 140000,
+          inputTokens: 90000,
+          cachedInputTokens: 10000,
+          outputTokens: 30000,
+          reasoningOutputTokens: 20000,
+        },
+        last: {
+          totalTokens: 90000,
+          inputTokens: 81000,
+          cachedInputTokens: 9000,
+          outputTokens: 6000,
+          reasoningOutputTokens: 3000,
+        },
+        modelContextWindow: 100000,
+      },
+    })
+
+    expect(event?.usage.last.inputTokens).toBe(81000)
+    const additional_context = tracker.additionalContext("thread-1")
+    const reminder = additional_context?.[CONTEXT_WINDOW_REMINDER_CONTEXT_KEY]
+    expect(reminder?.kind).toBe("application")
+    expect(reminder?.value).toContain("81%")
+    expect(reminder?.value).toContain("record durable state now")
+  })
+
+  it("ignores malformed token usage notifications", () => {
+    const tracker = new ContextWindowReminderTracker()
+    expect(tracker.observe("thread/tokenUsage/updated", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      tokenUsage: { last: {}, total: {}, modelContextWindow: 100000 },
+    })).toBeNull()
+    expect(tracker.additionalContext("thread-1")).toBeUndefined()
+  })
+
+  it("renders reminders when app-server omits the model context window", () => {
+    expect(renderContextWindowReminder({
+      total: {
+        totalTokens: 10,
+        inputTokens: 8,
+        cachedInputTokens: 0,
+        outputTokens: 2,
+        reasoningOutputTokens: 0,
+      },
+      last: {
+        totalTokens: 10,
+        inputTokens: 8,
+        cachedInputTokens: 0,
+        outputTokens: 2,
+        reasoningOutputTokens: 0,
+      },
+      modelContextWindow: null,
+    })).toContain("model context window was not reported")
   })
 })

@@ -17,6 +17,33 @@ type PendingRequest = {
 
 type NotificationHandler = (method: string, params: unknown) => void
 
+export type TokenUsageBreakdown = {
+  totalTokens: number
+  inputTokens: number
+  cachedInputTokens: number
+  outputTokens: number
+  reasoningOutputTokens: number
+}
+
+export type CodexThreadTokenUsage = {
+  total: TokenUsageBreakdown
+  last: TokenUsageBreakdown
+  modelContextWindow: number | null
+}
+
+export type ThreadTokenUsageEvent = {
+  thread_id: string
+  turn_id: string
+  usage: CodexThreadTokenUsage
+}
+
+export type AppServerAdditionalContext = Record<string, { value: string; kind: "application" }>
+
+export const CONTEXT_WINDOW_REMINDER_CONTEXT_KEY = "pcodx.context_window_reminder"
+
+const COMPACT_SOON_CONTEXT_FRACTION = 0.6
+const COMPACT_NOW_CONTEXT_FRACTION = 0.8
+
 export type CodexContextInjectionProbe = {
   ok: true
   user_agent: string
@@ -32,10 +59,50 @@ export type CodexLiveTurnSmoke = {
   status: string
   assistant: string
   n_items_injected: number
+  n_context_reminders_injected: number
+  turns_completed: number
+  token_usage: CodexThreadTokenUsage | null
+  context_window_reminder: string | null
 } | {
   ok: false
   error: string
   assistant: string
+  n_context_reminders_injected: number
+  turns_completed: number
+  token_usage: CodexThreadTokenUsage | null
+  context_window_reminder: string | null
+}
+
+export class ContextWindowReminderTracker {
+  #latest_by_thread_id = new Map<string, CodexThreadTokenUsage>()
+
+  observe(method: string, params: unknown): ThreadTokenUsageEvent | null {
+    if (method !== "thread/tokenUsage/updated") return null
+    const event = parseThreadTokenUsageUpdated(params)
+    if (!event) return null
+    this.#latest_by_thread_id.set(event.thread_id, event.usage)
+    return event
+  }
+
+  latest(thread_id: string): CodexThreadTokenUsage | null {
+    return this.#latest_by_thread_id.get(thread_id) ?? null
+  }
+
+  reminderText(thread_id: string): string | null {
+    const usage = this.latest(thread_id)
+    return usage ? renderContextWindowReminder(usage) : null
+  }
+
+  additionalContext(thread_id: string): AppServerAdditionalContext | undefined {
+    const reminder = this.reminderText(thread_id)
+    if (!reminder) return undefined
+    return {
+      [CONTEXT_WINDOW_REMINDER_CONTEXT_KEY]: {
+        kind: "application",
+        value: reminder,
+      },
+    }
+  }
 }
 
 class CodexAppServerStdio {
@@ -165,10 +232,21 @@ export async function runCuratedLiveTurnSmoke(
 ): Promise<CodexLiveTurnSmoke> {
   let assistant = ""
   let completeTurn: (turn: unknown) => void = () => {}
-  const completed = new Promise<unknown>(resolve => {
+  let observeUsage: (usage: CodexThreadTokenUsage) => void = () => {}
+  let turns_completed = 0
+  let n_context_reminders_injected = 0
+  let context_window_reminder: string | null = null
+  let token_usage: CodexThreadTokenUsage | null = null
+  const nextCompletedTurn = (): Promise<unknown> => new Promise(resolve => {
     completeTurn = resolve
   })
+  const nextTokenUsage = (): Promise<CodexThreadTokenUsage> => new Promise(resolve => {
+    observeUsage = resolve
+  })
+  const reminders = new ContextWindowReminderTracker()
   const client = new CodexAppServerStdio((method, params) => {
+    const usage_event = reminders.observe(method, params)
+    if (usage_event) observeUsage(usage_event.usage)
     if (method === "item/agentMessage/delta") {
       assistant += String((params as { delta?: unknown }).delta ?? "")
     }
@@ -199,17 +277,95 @@ export async function runCuratedLiveTurnSmoke(
       content: [{ type: "input_text", text: visible_context }],
     }]
     await withTimeout(client.request("thread/inject_items", { threadId: thread.thread_id, items }), timer)
+    const first_usage_observed = nextTokenUsage()
+    const first_turn_completed = nextCompletedTurn()
     await withTimeout(client.request("turn/start", {
       threadId: thread.thread_id,
       input: [{ type: "text", text: prompt, text_elements: [] }],
     }), timer)
-    const turn = parseTurn(await withTimeout(completed, timer))
-    if (turn.status !== "completed") {
-      return { ok: false, error: `turn status ${turn.status}`, assistant }
+    const first_turn = parseTurn(await withTimeout(first_turn_completed, timer))
+    turns_completed += 1
+    token_usage = reminders.latest(thread.thread_id) ??
+      await withTimeoutOrNull(first_usage_observed, AbortSignal.timeout(3000))
+    if (first_turn.status !== "completed") {
+      return {
+        ok: false,
+        error: `turn status ${first_turn.status}`,
+        assistant,
+        n_context_reminders_injected,
+        turns_completed,
+        token_usage,
+        context_window_reminder,
+      }
     }
-    return { ok: true, status: turn.status, assistant, n_items_injected: items.length }
+    if (!token_usage) {
+      return {
+        ok: false,
+        error: "turn completed without app-server token usage notification",
+        assistant,
+        n_context_reminders_injected,
+        turns_completed,
+        token_usage,
+        context_window_reminder,
+      }
+    }
+    const additionalContext = reminders.additionalContext(thread.thread_id)
+    context_window_reminder = reminders.reminderText(thread.thread_id)
+    if (!additionalContext || !context_window_reminder) {
+      return {
+        ok: false,
+        error: "token usage did not render a context-window reminder",
+        assistant,
+        n_context_reminders_injected,
+        turns_completed,
+        token_usage,
+        context_window_reminder,
+      }
+    }
+    const second_turn_completed = nextCompletedTurn()
+    await withTimeout(client.request("turn/start", {
+      threadId: thread.thread_id,
+      input: [{
+        type: "text",
+        text: "Acknowledge the app-server context reminder in one short sentence. Do not run tools.",
+        text_elements: [],
+      }],
+      additionalContext,
+    }), timer)
+    n_context_reminders_injected += 1
+    const second_turn = parseTurn(await withTimeout(second_turn_completed, timer))
+    turns_completed += 1
+    if (second_turn.status !== "completed") {
+      return {
+        ok: false,
+        error: `follow-up turn status ${second_turn.status}`,
+        assistant,
+        n_context_reminders_injected,
+        turns_completed,
+        token_usage,
+        context_window_reminder,
+      }
+    }
+    return {
+      ok: true,
+      status: second_turn.status,
+      assistant,
+      n_items_injected: items.length,
+      n_context_reminders_injected,
+      turns_completed,
+      token_usage,
+      context_window_reminder,
+    }
   } catch (err) {
-    return { ok: false, error: sanitizeError(String((err as Error).message ?? err)), assistant }
+    return {
+      ok: false,
+      error: sanitizeError(String((err as Error).message ?? err)),
+      assistant,
+      n_context_reminders_injected,
+      turns_completed,
+      token_usage,
+      context_window_reminder,
+    }
   } finally {
     client.close()
   }
@@ -231,6 +387,110 @@ async function withTimeout<T>(promise: Promise<T>, signal: AbortSignal): Promise
       },
     )
   })
+}
+
+async function withTimeoutOrNull<T>(promise: Promise<T>, signal: AbortSignal): Promise<T | null> {
+  if (signal.aborted) return null
+  return await new Promise(resolve => {
+    const abort = (): void => resolve(null)
+    signal.addEventListener("abort", abort, { once: true })
+    promise.then(
+      value => {
+        signal.removeEventListener("abort", abort)
+        resolve(value)
+      },
+      () => {
+        signal.removeEventListener("abort", abort)
+        resolve(null)
+      },
+    )
+  })
+}
+
+export function parseThreadTokenUsageUpdated(params: unknown): ThreadTokenUsageEvent | null {
+  if (!isRecord(params)) return null
+  const thread_id = typeof params.threadId === "string" ? params.threadId : ""
+  const turn_id = typeof params.turnId === "string" ? params.turnId : ""
+  if (!thread_id || !turn_id) return null
+  const usage = parseThreadTokenUsage(params.tokenUsage)
+  return usage ? { thread_id, turn_id, usage } : null
+}
+
+export function renderContextWindowReminder(usage: CodexThreadTokenUsage): string {
+  const last_input_tokens = usage.last.inputTokens
+  const context_window = usableContextWindow(usage.modelContextWindow)
+  const window_text = context_window === null
+    ? `last completed model-call input was ${formatInt(last_input_tokens)} tokens; model context window was not reported`
+    : `last completed model-call input was ${formatInt(last_input_tokens)} of ${formatInt(context_window)} tokens (${formatPercent(last_input_tokens / context_window)})`
+  return [
+    `PCODX context-window reminder: ${window_text}.`,
+    `Completed-turn total so far is ${formatInt(usage.total.totalTokens)} tokens.`,
+    `Action: ${contextReminderAction(last_input_tokens, context_window)}.`,
+  ].join(" ")
+}
+
+function parseThreadTokenUsage(raw: unknown): CodexThreadTokenUsage | null {
+  if (!isRecord(raw)) return null
+  const total = parseTokenUsageBreakdown(raw.total)
+  const last = parseTokenUsageBreakdown(raw.last)
+  if (!total || !last) return null
+  const modelContextWindow = raw.modelContextWindow === null
+    ? null
+    : usableContextWindow(raw.modelContextWindow)
+  return { total, last, modelContextWindow }
+}
+
+function parseTokenUsageBreakdown(raw: unknown): TokenUsageBreakdown | null {
+  if (!isRecord(raw)) return null
+  const totalTokens = finiteNumber(raw.totalTokens)
+  const inputTokens = finiteNumber(raw.inputTokens)
+  const cachedInputTokens = finiteNumber(raw.cachedInputTokens)
+  const outputTokens = finiteNumber(raw.outputTokens)
+  const reasoningOutputTokens = finiteNumber(raw.reasoningOutputTokens)
+  if (
+    totalTokens === null ||
+    inputTokens === null ||
+    cachedInputTokens === null ||
+    outputTokens === null ||
+    reasoningOutputTokens === null
+  ) return null
+  return { totalTokens, inputTokens, cachedInputTokens, outputTokens, reasoningOutputTokens }
+}
+
+function contextReminderAction(last_input_tokens: number, context_window: number | null): string {
+  if (context_window === null) {
+    return "watch growth; if context feels crowded, record durable state and compact stale recorded ranges"
+  }
+  const fraction = last_input_tokens / context_window
+  if (fraction >= COMPACT_NOW_CONTEXT_FRACTION) {
+    return "record durable state now, compact stale recorded ranges, or ask the manager to compact or resume with preserved context"
+  }
+  if (fraction >= COMPACT_SOON_CONTEXT_FRACTION) {
+    return "finish the current narrow step, then compact stale recorded ranges before broad exploration"
+  }
+  return "continue normal work and compact at the existing PCODX trigger points"
+}
+
+function usableContextWindow(value: unknown): number | null {
+  const n = finiteNumber(value)
+  return n === null || n <= 0 ? null : n
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null
+}
+
+function formatInt(value: number): string {
+  return Math.round(value).toLocaleString("en-US")
+}
+
+function formatPercent(value: number): string {
+  const rounded = Math.round(value * 1000) / 10
+  return `${rounded.toFixed(1).replace(/\.0$/, "")}%`
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function parseInitializeResult(raw: unknown): { user_agent: string; platform: string } {
