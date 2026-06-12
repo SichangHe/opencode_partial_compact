@@ -40,6 +40,12 @@
   - `bun run smoke:mcp` verifies the server tool list and records a real compaction in a ledger
   - `bun run smoke:pcodx-startup` verifies Codex receives the shared text through `developer_instructions`
   - this path gives a normal pcodx worker a callable partial-compaction mechanism, but it still does not rewrite Codex's hidden native transcript
+- context visibility boundary
+  - model maximum context is visible outside PCODX: Codex session JSONL emits `task_started.model_context_window` and `token_count.info.model_context_window`, and `model_context_window` can also be configured as model metadata
+  - current native usage is visible to the Codex UI/status layer: `/status` reports context usage, status-line items include `context-used`, and session JSONL `token_count.info.last_token_usage.input_tokens` records the last completed model-call input size
+  - `codex debug prompt-input` renders the model-visible prompt item list, but does not report token usage
+  - the PCODX MCP server cannot read live hidden native usage because Codex does not pass the real session id, session JSONL path, token counter, or pending hidden transcript state into MCP server calls
+  - smallest plausible dynamic integration point is a Codex/app-server bridge that forwards `TokenCountEvent` and the current thread/session id to PCODX, or a launcher/runtime hook that gives the MCP server the exact session JSONL path after Codex creates it
 - evidence
   - `visible-before-compaction.txt` contains stale raw context
   - `visible-after-compaction.txt` contains the summary and omits stale raw context
