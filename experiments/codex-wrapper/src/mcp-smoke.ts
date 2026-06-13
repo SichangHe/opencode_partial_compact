@@ -54,13 +54,16 @@ try {
   }
   const instructions = await client.callTool({ name: "partial_compact_instructions", arguments: {} })
   const instructions_text = tool_text(instructions)
-  for (const expected of ["expected context hygiene", "Expected triggers", "roughly 10 substantive tool or command results", "Context-window reminder"]) {
+  for (const expected of ["expected context hygiene", "Expected triggers", "roughly 10 substantive tool or command results", "Context-window reminder", "stock CLI worker's next model call is not smaller by itself"]) {
     if (!instructions_text.includes(expected)) throw new Error(`missing instruction text: ${expected}`)
   }
-  await client.callTool({
+  const first_record = await client.callTool({
     name: "partial_compact_record_message",
     arguments: { role: "user", text: "stale observation A", source: "smoke" },
   })
+  if (parse_tool_json(first_record).native_context_rewritten !== false) {
+    throw new Error("record result did not disclose native context boundary")
+  }
   await client.callTool({
     name: "partial_compact_record_message",
     arguments: { role: "assistant", text: "stale observation B", source: "smoke" },
@@ -95,6 +98,7 @@ try {
   if (!Array.isArray(compact_visible_ids) || compact_visible_ids.join(",") !== "cmp000001") {
     throw new Error(`unexpected compaction visible ids: ${JSON.stringify(compact_visible_ids)}`)
   }
+  if (compact_result.native_context_rewritten !== false) throw new Error("MCP result did not disclose native context boundary")
   const compact_context = compact_result.rendered_visible_context
   if (typeof compact_context !== "string") throw new Error("compaction result missing rendered context")
   if (!compact_context.includes("smoke summary replacing two stale observations")) {

@@ -9,9 +9,9 @@ export function pcodx_startup_instructions(ledger_path: string): string {
     "Context-window reminder: watch any available context-used/status indicator; if it is high or rising quickly, record durable state, compact stale recorded ranges, or ask the manager to compact/resume with the tmux target, task file, and context to preserve.",
     "Concrete action: call partial_compact_current_session_message_ids, choose the oldest contiguous recorded range whose raw text is no longer needed, then call partial_compact with from_message_id, to_message_id, and a faithful summary.",
     "If no recorded range is safe to compact, record a short status message explaining the active goal, preserved constraints, current files, verifier/test state, blockers, and next action so a later compaction has useful material.",
-    "After compaction, rely on the returned rendered_visible_context and the ledger artifact for the compacted working memory.",
+    "After compaction, rely on the returned rendered_visible_context and the ledger artifact for compacted working memory.",
     "Before exiting a non-trivial task, leave the ledger either compacted or with a clear reason no recorded range was safe to compact.",
-    "Caveat: this MCP prototype does not rewrite Codex's hidden native transcript.",
+    "Caveat: these MCP tools do not rewrite Codex's hidden native transcript, so a stock CLI worker's next model call is not smaller by itself; actual shrink requires an app-server controller or manager resume using rendered_visible_context.",
     "Available MCP tools: mcp__pcodx_partial_compact__partial_compact_record_message, mcp__pcodx_partial_compact__partial_compact_current_session_message_ids, and mcp__pcodx_partial_compact__partial_compact.",
   ].join("\n")
 }

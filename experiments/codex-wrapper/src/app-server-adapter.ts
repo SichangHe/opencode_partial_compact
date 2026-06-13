@@ -73,6 +73,20 @@ export type CodexLiveTurnSmoke = {
   context_window_reminder: string | null
 }
 
+export type CodexSingleTurnUsage = {
+  ok: true
+  assistant: string
+  n_items_injected: number
+  turns_completed: number
+  token_usage: CodexThreadTokenUsage
+} | {
+  ok: false
+  error: string
+  assistant: string
+  turns_completed: number
+  token_usage: CodexThreadTokenUsage | null
+}
+
 export class ContextWindowReminderTracker {
   #latest_by_thread_id = new Map<string, CodexThreadTokenUsage>()
 
@@ -365,6 +379,92 @@ export async function runCuratedLiveTurnSmoke(
       turns_completed,
       token_usage,
       context_window_reminder,
+    }
+  } finally {
+    client.close()
+  }
+}
+
+export async function runCuratedSingleTurnUsage(
+  visible_context: string,
+  prompt: string,
+  timeout_ms = 90000,
+): Promise<CodexSingleTurnUsage> {
+  let assistant = ""
+  let completeTurn: (turn: unknown) => void = () => {}
+  let observeUsage: (usage: CodexThreadTokenUsage) => void = () => {}
+  let turns_completed = 0
+  let token_usage: CodexThreadTokenUsage | null = null
+  const nextCompletedTurn = (): Promise<unknown> => new Promise(resolve => {
+    completeTurn = resolve
+  })
+  const nextTokenUsage = (): Promise<CodexThreadTokenUsage> => new Promise(resolve => {
+    observeUsage = resolve
+  })
+  const reminders = new ContextWindowReminderTracker()
+  const client = new CodexAppServerStdio((method, params) => {
+    const usage_event = reminders.observe(method, params)
+    if (usage_event) observeUsage(usage_event.usage)
+    if (method === "item/agentMessage/delta") {
+      assistant += String((params as { delta?: unknown }).delta ?? "")
+    }
+    if (method === "turn/completed") {
+      completeTurn((params as { turn?: unknown }).turn)
+    }
+  })
+  const timer = AbortSignal.timeout(timeout_ms)
+  try {
+    await withTimeout(client.request("initialize", {
+      clientInfo: {
+        name: "opc_partial_compact_usage_probe",
+        title: "OPC Partial Compact Usage Probe",
+        version: "0.1.0",
+      },
+      capabilities: { experimentalApi: true },
+    }), timer)
+    client.notify("initialized", {})
+    const thread = parseThreadStartResult(await withTimeout(client.request("thread/start", {
+      ephemeral: true,
+      cwd: process.cwd(),
+      baseInstructions: "You are a concise coding assistant.",
+      developerInstructions: "Use injected curated context as prior conversation state.",
+    }), timer))
+    const items = [{
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: visible_context }],
+    }]
+    await withTimeout(client.request("thread/inject_items", { threadId: thread.thread_id, items }), timer)
+    const first_usage_observed = nextTokenUsage()
+    const first_turn_completed = nextCompletedTurn()
+    await withTimeout(client.request("turn/start", {
+      threadId: thread.thread_id,
+      input: [{ type: "text", text: prompt, text_elements: [] }],
+    }), timer)
+    const first_turn = parseTurn(await withTimeout(first_turn_completed, timer))
+    turns_completed += 1
+    token_usage = reminders.latest(thread.thread_id) ??
+      await withTimeoutOrNull(first_usage_observed, AbortSignal.timeout(3000))
+    if (first_turn.status !== "completed") {
+      return { ok: false, error: `turn status ${first_turn.status}`, assistant, turns_completed, token_usage }
+    }
+    if (!token_usage) {
+      return { ok: false, error: "turn completed without app-server token usage notification", assistant, turns_completed, token_usage }
+    }
+    return {
+      ok: true,
+      assistant,
+      n_items_injected: items.length,
+      turns_completed,
+      token_usage,
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      error: sanitizeError(String((err as Error).message ?? err)),
+      assistant,
+      turns_completed,
+      token_usage,
     }
   } finally {
     client.close()

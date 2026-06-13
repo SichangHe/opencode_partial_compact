@@ -17,6 +17,7 @@
   - the app-server adapter observes `thread/tokenUsage/updated` notifications when a real turn completes
   - observed app-server usage includes last-turn input tokens, total completed-turn tokens, and `modelContextWindow`
   - the adapter renders a PCODX context-window reminder and passes it as `turn/start.additionalContext` for the next turn on that thread
+  - actual partial compaction needs this controller boundary, because the controller can choose the compacted ledger render as the next model-visible history
   - `probe:schema` generates local app-server protocol bindings for the installed Codex version
 - demo
   - `bun run demo`
@@ -32,6 +33,12 @@
   - starts one live Codex turn to observe `thread/tokenUsage/updated`
   - starts a second live Codex turn with the rendered context-window reminder in `turn/start.additionalContext`
   - calls a model twice and is intentionally not part of default tests
+- context-shrink smoke
+  - `bun run smoke:context-shrink`
+  - builds a bulky ledger, records the raw render, compacts the bulky range, and records the compacted render
+  - starts real `codex app-server` turns for both renders
+  - fails unless the compacted render has materially lower completed-turn `last.inputTokens`
+  - this verifies the model-visible shrink requirement at the app-server controller boundary
 - pcodx MCP worker path
   - `pcodx` launches normal Codex with the `pcodx_partial_compact` MCP server
   - tools exposed by that server are `partial_compact_instructions`, `partial_compact_record_message`, `partial_compact_current_session_message_ids`, and `partial_compact`
@@ -41,17 +48,21 @@
   - workers are told to treat partial compaction as expected context hygiene, record compactable working memory early, and compact on concrete triggers
   - concrete triggers include before manager compact/resume requests, before new broad exploration/verifier loops when prior recorded context is stale, after commit/push/report phases, after roughly 10 substantive tool or command results without compaction, or whenever context feels crowded enough to slow reasoning
   - context-window reminders in normal manager workers remain static startup instructions to watch Codex's context-used/status indicator; no dynamic MCP reminder exists because the server cannot read Codex's hidden native context usage
+  - MCP context/compaction results return `native_context_rewritten: false` to prevent confusing sidecar ledger compaction with stock CLI transcript replacement
   - `bun run smoke:mcp` verifies the server tool list and records a real compaction in a ledger
   - `bun run smoke:pcodx-startup` verifies Codex receives the shared text through `developer_instructions`
-  - this path gives a normal pcodx worker a callable partial-compaction mechanism, but it still does not rewrite Codex's hidden native transcript
+  - root cause of the live PCODX failure: this path changes only the MCP sidecar ledger and tool result; it does not rewrite Codex's hidden native transcript, so the next stock CLI model call still carries the original transcript
 - context visibility boundary
   - model maximum context is visible outside PCODX: Codex session JSONL emits `task_started.model_context_window` and `token_count.info.model_context_window`, and `model_context_window` can also be configured as model metadata
   - current native usage is visible to the Codex UI/status layer: `/status` reports context usage, status-line items include `context-used`, and session JSONL `token_count.info.last_token_usage.input_tokens` records the last completed model-call input size
   - current app-server-managed usage is visible to a PCODX app-server wrapper through `thread/tokenUsage/updated`
+  - current app-server schema can append model-visible items with `thread/inject_items` and instantiate a non-running thread from caller-provided history with `thread/resume`
+  - current app-server schema cannot delete an arbitrary middle range from a running thread; `thread/rollback` only drops whole turns from the end
+  - current stock CLI/MCP workers do not expose their live thread id, transcript mutation API, or app-server connection to the MCP server
   - app-server reminder injection is based on completed-turn usage, so it is a next-turn reminder rather than a live mid-turn hidden-context gauge
   - `codex debug prompt-input` renders the model-visible prompt item list, but does not report token usage
   - the PCODX MCP server cannot read live hidden native usage because Codex does not pass the real session id, session JSONL path, token counter, or pending hidden transcript state into MCP server calls
-  - smallest plausible dynamic integration point for normal CLI/MCP workers is forwarding app-server `thread/tokenUsage/updated` or native `TokenCountEvent` plus the current thread/session id to PCODX, or a launcher/runtime hook that gives the MCP server the exact session JSONL path after Codex creates it
+  - smallest plausible live-compaction integration point for normal CLI/MCP workers is a Codex-native API that replaces model-visible history for the current running thread, or a PCODX app-server controller that owns every turn and resumes/injects only the compacted ledger render
 - evidence
   - `visible-before-compaction.txt` contains stale raw context
   - `visible-after-compaction.txt` contains the summary and omits stale raw context

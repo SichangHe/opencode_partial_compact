@@ -11,6 +11,7 @@ const session_id = process.env.PCODX_SESSION_ID ?? `pcodx-${process.pid}`
 const run_dir = process.env.PCODX_RUN_DIR ?? `/tmp/pcodx-runs/${session_id}`
 const ledger_path = process.env.PCODX_LEDGER_PATH ?? `${run_dir}/ledger.json`
 const ledger = loadLedger(ledger_path, session_id)
+const native_context_note = "MCP sidecar compaction does not rewrite the running Codex CLI transcript; actual model-visible shrink requires an app-server controller or manager resume using rendered_visible_context."
 
 const server = new McpServer({
   name: "pcodx-partial-compact",
@@ -48,7 +49,16 @@ server.registerTool(
     const message = ledger.append(role, text, source)
     saveLedger(ledger_path, ledger)
     return {
-      content: [{ type: "text", text: JSON.stringify({ ok: true, message, ledger_path }, null, 2) }],
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          ok: true,
+          message,
+          ledger_path,
+          native_context_rewritten: false,
+          native_context_note,
+        }, null, 2),
+      }],
     }
   },
 )
@@ -68,6 +78,8 @@ server.registerTool(
             ok: true,
             visible_message_ids: ledger.currentVisibleMessageIds(),
             ledger_path,
+            native_context_rewritten: false,
+            native_context_note,
             rendered_visible_context: ledger.renderVisibleContext("pcodx compacted visible context"),
           },
           null,
@@ -100,6 +112,8 @@ server.registerTool(
             {
               ...result,
               ledger_path,
+              native_context_rewritten: false,
+              native_context_note,
               rendered_visible_context: ledger.renderVisibleContext("pcodx compacted visible context"),
             },
             null,
