@@ -18,6 +18,12 @@
   - observed app-server usage includes last-turn input tokens, total completed-turn tokens, and `modelContextWindow`
   - the adapter renders a PCODX context-window reminder and passes it as `turn/start.additionalContext` for the next turn when completed-turn input usage crosses roughly 16k tokens of growth or a safety usage band
   - actual partial compaction needs this controller boundary, because the controller can choose the compacted ledger render as the next model-visible history
+  - `SelfCompactingCodexController` owns the ledger and starts each future app-server turn from one injected compacted render
+  - the controller exposes app-server dynamic tools for `partial_compact_current_session_message_ids` and `partial_compact`
+  - dynamic `partial_compact` mutates the controller ledger during the current turn; the current turn still contains its original prompt history, while the next controller-started app-server turn is smaller
+  - after a successful compaction during a turn, the controller records the compact tool transcript but omits that turn's prompt and assistant text from future ledger history so quoted raw pre-compaction text is not reintroduced
+  - the dynamic message-id helper returns compactable `msg...` endpoints separately from full visible entry ids that may include `cmp...` compaction markers
+  - the controller safely declines app-server approval requests it cannot broker; it is a minimal compaction controller, not a complete UI replacement
   - `probe:schema` generates local app-server protocol bindings for the installed Codex version
 - demo
   - `bun run demo`
@@ -39,6 +45,12 @@
   - starts real `codex app-server` turns for both renders
   - fails unless the compacted render has materially lower completed-turn `last.inputTokens`
   - this verifies the model-visible shrink requirement at the app-server controller boundary
+- self-compacting controller smoke
+  - `bun run smoke:self-compact`
+  - starts a real Codex app-server turn from a bulky controller ledger render
+  - asks Codex to call the controller `partial_compact` dynamic tool
+  - starts the next real Codex app-server turn from the compacted controller render
+  - fails if any generated raw compacted-away sentinel remains in the follow-up injected context or if next-turn app-server input tokens do not materially shrink
 - pcodx MCP worker path
   - `pcodx` launches normal Codex with the `pcodx_partial_compact` MCP server
   - tools exposed by that server are `partial_compact_instructions`, `partial_compact_record_message`, `partial_compact_current_session_message_ids`, and `partial_compact`
@@ -58,6 +70,7 @@
   - current app-server-managed usage is visible to a PCODX app-server wrapper through `thread/tokenUsage/updated`
   - current app-server schema can append model-visible items with `thread/inject_items` and instantiate a non-running thread from caller-provided history with `thread/resume`
   - current app-server schema cannot delete an arbitrary middle range from a running thread; `thread/rollback` only drops whole turns from the end
+  - minimal working self-compaction uses a controller-owned ledger plus fresh app-server threads, because fresh threads can be seeded with only the compacted render
   - current stock CLI/MCP workers do not expose their live thread id, transcript mutation API, or app-server connection to the MCP server
   - app-server reminder injection is based on completed-turn usage and a roughly 16k-token cadence, so it is a next-turn reminder rather than a live mid-turn hidden-context gauge
   - `codex debug prompt-input` renders the model-visible prompt item list, but does not report token usage

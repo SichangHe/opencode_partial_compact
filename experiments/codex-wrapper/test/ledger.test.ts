@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { WrapperLedger } from "../src/ledger.js"
 import { runDemo } from "../src/demo.js"
+import { SelfCompactingCodexController } from "../src/self-compacting-controller.js"
 import {
   CONTEXT_WINDOW_REMINDER_CONTEXT_KEY,
   ContextWindowReminderTracker,
@@ -67,6 +68,27 @@ describe("demo", () => {
     expect(after).not.toContain("STALE_LEGACY_AUDIT_BLOCK")
     expect(finalReport).toContain("production config sets `requestTimeoutMs` to 12000")
     expect(finalReport).toContain("Recommended fix")
+  })
+})
+
+describe("SelfCompactingCodexController", () => {
+  it("renders future app-server history from compacted ledger state", () => {
+    const controller = new SelfCompactingCodexController({ session_id: "controller-test" })
+    const first = controller.append("tool", "PCODX_RAW_CONTROLLER_SENTINEL_A", "tool:test")
+    const last = controller.append("tool", "PCODX_RAW_CONTROLLER_SENTINEL_B", "tool:test")
+    const result = controller.partialCompact({
+      from_message_id: first.id,
+      to_message_id: last.id,
+      summary: "controller summary survives",
+    })
+
+    expect(result.ok).toBe(true)
+    const history = JSON.stringify(controller.historyItems())
+    expect(history).toContain("controller summary survives")
+    expect(history).not.toContain("PCODX_RAW_CONTROLLER_SENTINEL_A")
+    expect(history).not.toContain("PCODX_RAW_CONTROLLER_SENTINEL_B")
+    expect(controller.currentVisibleMessageIds()).toEqual(["cmp000001"])
+    expect(controller.compactableMessageIds()).toEqual([])
   })
 })
 

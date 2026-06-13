@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process"
 import readline from "node:readline"
 
-type JsonRpcResponse = {
+type RequestId = string | number
+
+type JsonRpcMessage = {
   id?: unknown
   result?: unknown
   error?: { message?: unknown }
@@ -16,6 +18,7 @@ type PendingRequest = {
 }
 
 type NotificationHandler = (method: string, params: unknown) => void
+type ServerRequestHandler = (method: string, params: unknown) => Promise<unknown> | unknown
 
 export type TokenUsageBreakdown = {
   totalTokens: number
@@ -143,19 +146,21 @@ export class ContextWindowReminderTracker {
   }
 }
 
-class CodexAppServerStdio {
+export class CodexAppServerStdio {
   #proc = spawn("codex", ["app-server", "--listen", "stdio://"], {
     stdio: ["pipe", "pipe", "pipe"],
   })
   #rl = readline.createInterface({ input: this.#proc.stdout })
-  #pending = new Map<number, PendingRequest>()
+  #pending = new Map<RequestId, PendingRequest>()
   #next_id = 1
   #stderr = ""
   #closed = false
   #on_notification: NotificationHandler | undefined
+  #on_server_request: ServerRequestHandler | undefined
 
-  constructor(on_notification?: NotificationHandler) {
+  constructor(on_notification?: NotificationHandler, on_server_request?: ServerRequestHandler) {
     this.#on_notification = on_notification
+    this.#on_server_request = on_server_request
     this.#proc.stderr.on("data", chunk => {
       this.#stderr += String(chunk)
     })
@@ -192,14 +197,18 @@ class CodexAppServerStdio {
   }
 
   #handleLine(line: string): void {
-    let msg: JsonRpcResponse
+    let msg: JsonRpcMessage
     try {
-      msg = JSON.parse(line) as JsonRpcResponse
+      msg = JSON.parse(line) as JsonRpcMessage
     } catch {
       this.#rejectAll(new Error(`invalid app-server json: ${line}`))
       return
     }
-    if (typeof msg.id !== "number") {
+    if (isRequestId(msg.id) && typeof msg.method === "string") {
+      void this.#handleServerRequest(msg.id, msg.method, msg.params)
+      return
+    }
+    if (!isRequestId(msg.id)) {
       if (typeof msg.method === "string") this.#on_notification?.(msg.method, msg.params)
       return
     }
@@ -211,6 +220,16 @@ class CodexAppServerStdio {
       return
     }
     pending.resolve(msg.result)
+  }
+
+  async #handleServerRequest(id: RequestId, method: string, params: unknown): Promise<void> {
+    try {
+      if (!this.#on_server_request) throw new Error(`unhandled app-server request ${method}`)
+      this.#proc.stdin.write(`${JSON.stringify({ id, result: await this.#on_server_request(method, params) })}\n`)
+    } catch (err) {
+      const message = String((err as Error).message ?? err)
+      this.#proc.stdin.write(`${JSON.stringify({ id, error: { message } })}\n`)
+    }
   }
 
   #rejectAll(err: Error): void {
@@ -634,6 +653,10 @@ function formatPercent(value: number): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function isRequestId(value: unknown): value is RequestId {
+  return typeof value === "string" || typeof value === "number"
 }
 
 function parseInitializeResult(raw: unknown): { user_agent: string; platform: string } {
