@@ -1,5 +1,6 @@
 import { runCuratedLiveTurnSmoke } from "./app-server-adapter.js"
 
+const cadenceProbe = "x ".repeat(18000)
 const visibleContext = [
   "<system>partial compaction wrapper live-turn probe</system>",
   "",
@@ -8,6 +9,8 @@ const visibleContext = [
   "<compacted id=\"cmp000001\" range=\"msg000002..msg000004\">stale README and legacy audit were checked and are not production evidence.</compacted>",
   "",
   "<message id=\"msg000005\" role=\"tool\">production config requestTimeoutMs=12000 upstreamDeadlineMs=9000</message>",
+  "",
+  `<message id="msg000006" role="tool">cadence threshold probe payload: ${cadenceProbe}</message>`,
 ].join("\n")
 
 const prompt = [

@@ -41,6 +41,7 @@ export type AppServerAdditionalContext = Record<string, { value: string; kind: "
 
 export const CONTEXT_WINDOW_REMINDER_CONTEXT_KEY = "pcodx.context_window_reminder"
 
+const CONTEXT_WINDOW_REMINDER_INTERVAL_TOKENS = 16_000
 const COMPACT_SOON_CONTEXT_FRACTION = 0.6
 const COMPACT_NOW_CONTEXT_FRACTION = 0.8
 
@@ -89,6 +90,12 @@ export type CodexSingleTurnUsage = {
 
 export class ContextWindowReminderTracker {
   #latest_by_thread_id = new Map<string, CodexThreadTokenUsage>()
+  #last_reminder_input_tokens_by_thread_id = new Map<string, number>()
+  readonly #reminder_interval_tokens: number
+
+  constructor(reminder_interval_tokens = CONTEXT_WINDOW_REMINDER_INTERVAL_TOKENS) {
+    this.#reminder_interval_tokens = reminder_interval_tokens
+  }
 
   observe(method: string, params: unknown): ThreadTokenUsageEvent | null {
     if (method !== "thread/tokenUsage/updated") return null
@@ -108,14 +115,31 @@ export class ContextWindowReminderTracker {
   }
 
   additionalContext(thread_id: string): AppServerAdditionalContext | undefined {
+    const usage = this.latest(thread_id)
+    if (!usage || !this.#reminderDue(thread_id, usage)) return undefined
     const reminder = this.reminderText(thread_id)
     if (!reminder) return undefined
+    this.#last_reminder_input_tokens_by_thread_id.set(thread_id, usage.last.inputTokens)
     return {
       [CONTEXT_WINDOW_REMINDER_CONTEXT_KEY]: {
         kind: "application",
         value: reminder,
       },
     }
+  }
+
+  #reminderDue(thread_id: string, usage: CodexThreadTokenUsage): boolean {
+    const interval = effectiveContextReminderInterval(this.#reminder_interval_tokens, usage.modelContextWindow)
+    if (interval === null) return false
+    const input_tokens = usage.last.inputTokens
+    const last_input_tokens = this.#last_reminder_input_tokens_by_thread_id.get(thread_id) ?? 0
+    if (input_tokens < last_input_tokens) {
+      this.#last_reminder_input_tokens_by_thread_id.set(thread_id, input_tokens)
+      return false
+    }
+    const level_due = crossedContextUsageLevel(input_tokens, last_input_tokens, usage.modelContextWindow)
+    if (input_tokens < interval && !level_due) return false
+    return input_tokens - last_input_tokens >= interval || level_due
   }
 }
 
@@ -569,6 +593,25 @@ function contextReminderAction(last_input_tokens: number, context_window: number
     return "finish the current narrow step, then compact stale recorded ranges before broad exploration"
   }
   return "continue normal work and compact at the existing PCODX trigger points"
+}
+
+function effectiveContextReminderInterval(configured_interval_tokens: number, context_window: number | null): number | null {
+  if (!Number.isFinite(configured_interval_tokens) || configured_interval_tokens <= 0) return null
+  if (context_window === null || context_window >= configured_interval_tokens) return configured_interval_tokens
+  return Math.max(1, Math.floor(context_window * COMPACT_NOW_CONTEXT_FRACTION))
+}
+
+function crossedContextUsageLevel(input_tokens: number, last_input_tokens: number, context_window: number | null): boolean {
+  return contextUsageRank(input_tokens, context_window) > contextUsageRank(last_input_tokens, context_window)
+}
+
+function contextUsageRank(input_tokens: number, context_window: number | null): number {
+  if (context_window === null) return 0
+  const fraction = input_tokens / context_window
+  if (fraction >= 0.9) return 4
+  if (fraction >= COMPACT_NOW_CONTEXT_FRACTION) return 3
+  if (fraction >= 0.5) return 2
+  return 1
 }
 
 function usableContextWindow(value: unknown): number | null {

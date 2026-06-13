@@ -73,27 +73,7 @@ describe("demo", () => {
 describe("context window reminders", () => {
   it("renders app-server token usage as turn additional context", () => {
     const tracker = new ContextWindowReminderTracker()
-    const event = tracker.observe("thread/tokenUsage/updated", {
-      threadId: "thread-1",
-      turnId: "turn-1",
-      tokenUsage: {
-        total: {
-          totalTokens: 140000,
-          inputTokens: 90000,
-          cachedInputTokens: 10000,
-          outputTokens: 30000,
-          reasoningOutputTokens: 20000,
-        },
-        last: {
-          totalTokens: 90000,
-          inputTokens: 81000,
-          cachedInputTokens: 9000,
-          outputTokens: 6000,
-          reasoningOutputTokens: 3000,
-        },
-        modelContextWindow: 100000,
-      },
-    })
+    const event = observeTokenUsage(tracker, 81000)
 
     expect(event?.usage.last.inputTokens).toBe(81000)
     const additional_context = tracker.additionalContext("thread-1")
@@ -101,6 +81,39 @@ describe("context window reminders", () => {
     expect(reminder?.kind).toBe("application")
     expect(reminder?.value).toContain("81%")
     expect(reminder?.value).toContain("record durable state now")
+  })
+
+  it("gates app-server reminders by token-growth cadence", () => {
+    const tracker = new ContextWindowReminderTracker()
+    observeTokenUsage(tracker, 15999)
+    expect(tracker.additionalContext("thread-1")).toBeUndefined()
+
+    observeTokenUsage(tracker, 16000)
+    const first_reminder = tracker.additionalContext("thread-1")?.[CONTEXT_WINDOW_REMINDER_CONTEXT_KEY]
+    expect(first_reminder?.value).toContain("16%")
+    expect(tracker.additionalContext("thread-1")).toBeUndefined()
+
+    observeTokenUsage(tracker, 31999)
+    expect(tracker.additionalContext("thread-1")).toBeUndefined()
+
+    observeTokenUsage(tracker, 32000)
+    const second_reminder = tracker.additionalContext("thread-1")?.[CONTEXT_WINDOW_REMINDER_CONTEXT_KEY]
+    expect(second_reminder?.value).toContain("32%")
+  })
+
+  it("resets app-server reminder cadence after context shrink", () => {
+    const tracker = new ContextWindowReminderTracker()
+    observeTokenUsage(tracker, 40000)
+    expect(tracker.additionalContext("thread-1")).toBeDefined()
+
+    observeTokenUsage(tracker, 10000)
+    expect(tracker.additionalContext("thread-1")).toBeUndefined()
+
+    observeTokenUsage(tracker, 25999)
+    expect(tracker.additionalContext("thread-1")).toBeUndefined()
+
+    observeTokenUsage(tracker, 26000)
+    expect(tracker.additionalContext("thread-1")).toBeDefined()
   })
 
   it("ignores malformed token usage notifications", () => {
@@ -133,3 +146,31 @@ describe("context window reminders", () => {
     })).toContain("model context window was not reported")
   })
 })
+
+function observeTokenUsage(
+  tracker: ContextWindowReminderTracker,
+  input_tokens: number,
+  model_context_window: number | null = 100000,
+) {
+  return tracker.observe("thread/tokenUsage/updated", {
+    threadId: "thread-1",
+    turnId: `turn-${input_tokens}`,
+    tokenUsage: {
+      total: {
+        totalTokens: input_tokens + 100,
+        inputTokens: input_tokens,
+        cachedInputTokens: 0,
+        outputTokens: 100,
+        reasoningOutputTokens: 0,
+      },
+      last: {
+        totalTokens: input_tokens + 100,
+        inputTokens: input_tokens,
+        cachedInputTokens: 0,
+        outputTokens: 100,
+        reasoningOutputTokens: 0,
+      },
+      modelContextWindow: model_context_window,
+    },
+  })
+}
