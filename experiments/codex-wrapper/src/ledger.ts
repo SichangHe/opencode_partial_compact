@@ -3,6 +3,8 @@ import type {
   LedgerMessage,
   MessageRole,
   PartialCompactArgs,
+  PartialCompactRange,
+  PartialCompactRangesResult,
   PartialCompactResult,
   VisibleEntry,
 } from "./types.js"
@@ -38,37 +40,69 @@ export class WrapperLedger {
   }
 
   partialCompact(args: PartialCompactArgs): PartialCompactResult {
-    const summary = args.summary.trim()
-    if (summary.length === 0) return { ok: false, error: "summary must be non-empty" }
+    const result = this.partialCompactRanges([args])
+    if (!result.ok) return result
+    const record = result.records[0]
+    if (!record) return { ok: false, error: "no compaction record created" }
+    return { ok: true, record, visible_message_ids: result.visible_message_ids }
+  }
 
-    const from_idx = this.messages.findIndex(msg => msg.id === args.from_message_id)
-    if (from_idx === -1) return { ok: false, error: `from_message_id ${args.from_message_id} not found` }
+  partialCompactRanges(ranges: PartialCompactRange[]): PartialCompactRangesResult {
+    if (ranges.length === 0) return { ok: false, error: "ranges must be non-empty" }
+    const pending: Array<{ range: PartialCompactRange; from_idx: number; to_idx: number; summary: string }> = []
 
-    const to_idx = this.messages.findIndex(msg => msg.id === args.to_message_id)
-    if (to_idx === -1) return { ok: false, error: `to_message_id ${args.to_message_id} not found` }
-    if (from_idx > to_idx) {
-      return { ok: false, error: `${args.from_message_id} comes after ${args.to_message_id}` }
-    }
+    for (const range of ranges) {
+      const summary = range.summary.trim()
+      if (summary.length === 0) return { ok: false, error: "summary must be non-empty" }
 
-    for (const record of this.compactions) {
-      const rec_from_idx = this.mustMessageIndex(record.from_message_id)
-      const rec_to_idx = this.mustMessageIndex(record.to_message_id)
-      if (from_idx <= rec_to_idx && to_idx >= rec_from_idx) {
-        return { ok: false, error: `range overlaps compaction ${record.id}` }
+      const from_idx = this.messages.findIndex(msg => msg.id === range.from_message_id)
+      if (from_idx === -1) return { ok: false, error: `from_message_id ${range.from_message_id} not found` }
+
+      const to_idx = this.messages.findIndex(msg => msg.id === range.to_message_id)
+      if (to_idx === -1) return { ok: false, error: `to_message_id ${range.to_message_id} not found` }
+      if (from_idx > to_idx) {
+        return { ok: false, error: `${range.from_message_id} comes after ${range.to_message_id}` }
       }
+
+      for (const record of this.compactions) {
+        const rec_from_idx = this.mustMessageIndex(record.from_message_id)
+        const rec_to_idx = this.mustMessageIndex(record.to_message_id)
+        if (from_idx <= rec_to_idx && to_idx >= rec_from_idx) {
+          return { ok: false, error: `range overlaps compaction ${record.id}` }
+        }
+      }
+
+      for (const prior of pending) {
+        if (from_idx <= prior.to_idx && to_idx >= prior.from_idx) {
+          return { ok: false, error: `range overlaps requested range ${prior.range.from_message_id}..${prior.range.to_message_id}` }
+        }
+      }
+
+      pending.push({ range, from_idx, to_idx, summary })
     }
 
-    const record: CompactionRecord = {
-      id: formatCompactionId(this.#next_compaction_n),
-      from_message_id: args.from_message_id,
-      to_message_id: args.to_message_id,
-      summary,
-      created_at_iso: new Date(0).toISOString(),
-      n_messages_replaced: to_idx - from_idx + 1,
+    const records: CompactionRecord[] = []
+    for (const item of pending) {
+      const record: CompactionRecord = {
+        id: formatCompactionId(this.#next_compaction_n),
+        from_message_id: item.range.from_message_id,
+        to_message_id: item.range.to_message_id,
+        summary: item.summary,
+        created_at_iso: new Date(0).toISOString(),
+        n_messages_replaced: item.to_idx - item.from_idx + 1,
+      }
+      this.#next_compaction_n += 1
+      this.compactions.push(record)
+      records.push(record)
     }
-    this.#next_compaction_n += 1
-    this.compactions.push(record)
-    return { ok: true, record, visible_message_ids: this.currentVisibleMessageIds() }
+
+    return {
+      ok: true,
+      records,
+      visible_message_ids: this.currentVisibleMessageIds(),
+      n_ranges_compacted: records.length,
+      n_messages_replaced: records.reduce((sum, record) => sum + record.n_messages_replaced, 0),
+    }
   }
 
   visibleEntries(): VisibleEntry[] {

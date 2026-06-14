@@ -33,9 +33,11 @@ await writeFile(join(RUN_DIR, "visible-before-compaction.txt"), raw_context, "ut
 const compact_prompt = [
   "Call the partial_compact tool exactly once with these arguments:",
   JSON.stringify({
-    from_message_id: first.id,
-    to_message_id: last.id,
-    summary: SUMMARY,
+    ranges: [{
+      from_message_id: first.id,
+      to_message_id: last.id,
+      summary: SUMMARY,
+    }],
   }),
   "After the tool result, reply with only PCODX_COMPACTION_DONE.",
 ].join("\n")

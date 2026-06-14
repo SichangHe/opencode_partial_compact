@@ -2,12 +2,15 @@ import { describe, expect, it } from "bun:test"
 import { WrapperLedger } from "../src/ledger.js"
 import { runDemo } from "../src/demo.js"
 import { SelfCompactingCodexController } from "../src/self-compacting-controller.js"
+import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import {
   CONTEXT_WINDOW_REMINDER_CONTEXT_KEY,
   ContextWindowReminderTracker,
   renderContextWindowReminder,
 } from "../src/app-server-adapter.js"
-import { readFile } from "node:fs/promises"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -52,6 +55,123 @@ describe("WrapperLedger", () => {
       summary: "overlap",
     })
     expect(result.ok).toBe(false)
+  })
+
+  it("compacts multiple disjoint ranges atomically", () => {
+    const ledger = new WrapperLedger("test-session")
+    const first = ledger.append("assistant", "stale one")
+    const keep = ledger.append("tool", "keep")
+    const second = ledger.append("assistant", "stale two")
+    const result = ledger.partialCompactRanges([
+      { from_message_id: first.id, to_message_id: first.id, summary: "first stale summary" },
+      { from_message_id: second.id, to_message_id: second.id, summary: "second stale summary" },
+    ])
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error("expected compaction success")
+    expect(result.n_ranges_compacted).toBe(2)
+    expect(result.n_messages_replaced).toBe(2)
+    expect(result.visible_message_ids).toEqual(["cmp000001", keep.id, "cmp000002"])
+    const context = ledger.renderVisibleContext("system")
+    expect(context).toContain("first stale summary")
+    expect(context).toContain("second stale summary")
+    expect(context).toContain("keep")
+    expect(context).not.toContain("stale one")
+    expect(context).not.toContain("stale two")
+  })
+
+  it("rejects overlapping requested ranges without partial writes", () => {
+    const ledger = new WrapperLedger("test-session")
+    const first = ledger.append("assistant", "one")
+    const second = ledger.append("tool", "two")
+    const third = ledger.append("assistant", "three")
+
+    const result = ledger.partialCompactRanges([
+      { from_message_id: first.id, to_message_id: second.id, summary: "first summary" },
+      { from_message_id: second.id, to_message_id: third.id, summary: "overlap summary" },
+    ])
+
+    expect(result.ok).toBe(false)
+    expect(ledger.compactions).toHaveLength(0)
+    expect(ledger.currentVisibleMessageIds()).toEqual([first.id, second.id, third.id])
+  })
+})
+
+describe("pcodx MCP sidecar", () => {
+  it("keeps tool receipts compact and compacts multiple ranges in one call", async () => {
+    const run_dir = await mkdtemp(join(tmpdir(), "pcodx-mcp-test-"))
+    const ledger_path = join(run_dir, "ledger.json")
+    const transport = new StdioClientTransport({
+      command: "bun",
+      args: ["run", join(ROOT, "src", "mcp-server.ts")],
+      env: {
+        ...process.env,
+        PCODX_LEDGER_PATH: ledger_path,
+        PCODX_SESSION_ID: "pcodx-mcp-test",
+      },
+    })
+    const client = new Client({ name: "pcodx-mcp-test", version: "0.1.0" })
+    const raw_a = "PCODX_RAW_RECEIPT_SENTINEL_A"
+    const raw_b = "PCODX_RAW_RECEIPT_SENTINEL_B"
+    try {
+      await client.connect(transport)
+      const empty_ids = toolJson(await client.callTool({ name: "partial_compact_current_session_message_ids", arguments: {} }))
+      const empty_visible_context_path = requireString(empty_ids.visible_context_path)
+      const empty_visible_context = await readFile(empty_visible_context_path, "utf8")
+      expect(empty_visible_context).toContain("<system>pcodx compacted visible context</system>")
+
+      const first_raw = await client.callTool({
+        name: "partial_compact_record_message",
+        arguments: { role: "tool", text: raw_a, source: "test" },
+      })
+      const first_text = toolText(first_raw)
+      expectReceiptHidesVisibleContext(first_text)
+      expect(first_text).not.toContain(raw_a)
+      const first = toolJson(first_raw)
+      await client.callTool({
+        name: "partial_compact_record_message",
+        arguments: { role: "assistant", text: "durable keep", source: "test" },
+      })
+      const second_raw = await client.callTool({
+        name: "partial_compact_record_message",
+        arguments: { role: "tool", text: raw_b, source: "test" },
+      })
+      const second_text = toolText(second_raw)
+      expectReceiptHidesVisibleContext(second_text)
+      expect(second_text).not.toContain(raw_b)
+      const second = toolJson(second_raw)
+      const first_id = requireString(first.message_id)
+      const second_id = requireString(second.message_id)
+
+      const ids_text = toolText(await client.callTool({ name: "partial_compact_current_session_message_ids", arguments: {} }))
+      expectReceiptHidesVisibleContext(ids_text)
+      expect(ids_text).not.toContain(raw_a)
+      expect(ids_text).not.toContain(raw_b)
+
+      const compact_text = toolText(await client.callTool({
+        name: "partial_compact",
+        arguments: {
+          ranges: [
+            { from_message_id: first_id, to_message_id: first_id, summary: "first raw sentinel summary" },
+            { from_message_id: second_id, to_message_id: second_id, summary: "second raw sentinel summary" },
+          ],
+        },
+      }))
+      expectReceiptHidesVisibleContext(compact_text)
+      expect(compact_text).not.toContain(raw_a)
+      expect(compact_text).not.toContain(raw_b)
+      const compact = JSON.parse(compact_text) as { n_ranges_compacted: number; visible_context_path: string }
+      expect(compact.n_ranges_compacted).toBe(2)
+      const visible_context = await readFile(compact.visible_context_path, "utf8")
+      expect(visible_context).toContain("first raw sentinel summary")
+      expect(visible_context).toContain("second raw sentinel summary")
+      expect(visible_context).toContain("durable keep")
+      expect(visible_context).not.toContain(raw_a)
+      expect(visible_context).not.toContain(raw_b)
+    } finally {
+      await client.close()
+      await rm(run_dir, { recursive: true, force: true })
+    }
   })
 })
 
@@ -168,6 +288,46 @@ describe("context window reminders", () => {
     })).toContain("model context window was not reported")
   })
 })
+
+function toolText(result: unknown): string {
+  if (typeof result !== "object" || result === null || !("content" in result)) {
+    throw new Error("MCP tool result missing content")
+  }
+  const content = result.content
+  if (!Array.isArray(content)) throw new Error("MCP tool result content is not an array")
+  const text = content
+    .filter((part): part is { type: "text"; text: string } =>
+      typeof part === "object" &&
+      part !== null &&
+      "type" in part &&
+      part.type === "text" &&
+      "text" in part &&
+      typeof part.text === "string")
+    .map(part => part.text)
+    .join("\n")
+  if (text.length === 0) throw new Error("MCP tool result has no text")
+  return text
+}
+
+function toolJson(result: unknown): Record<string, unknown> {
+  const parsed = JSON.parse(toolText(result))
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("MCP tool result is not a JSON object")
+  }
+  return parsed as Record<string, unknown>
+}
+
+function requireString(value: unknown): string {
+  if (typeof value !== "string") throw new Error("expected string")
+  return value
+}
+
+function expectReceiptHidesVisibleContext(text: string): void {
+  expect(text).not.toContain("rendered_visible_context")
+  expect(text).not.toContain("<system>")
+  expect(text).not.toContain("<message")
+  expect(text).not.toContain("<compacted")
+}
 
 function observeTokenUsage(
   tracker: ContextWindowReminderTracker,

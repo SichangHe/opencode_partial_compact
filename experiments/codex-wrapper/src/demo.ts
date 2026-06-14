@@ -62,7 +62,7 @@ async function executeToolCall(label: string, ledger: WrapperLedger, call: Agent
       ledger.append("tool", `current visible ids: ${ledger.currentVisibleMessageIds().join(", ")}`, `tool:${label}`)
       return
     case "partial_compact": {
-      const result = ledger.partialCompact(call.args)
+      const result = ledger.partialCompactRanges(call.args.ranges)
       ledger.append("tool", `partial_compact result: ${JSON.stringify(result)}`, `tool:${label}`)
       return
     }

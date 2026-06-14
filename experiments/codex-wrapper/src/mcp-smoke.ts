@@ -54,13 +54,18 @@ try {
   }
   const instructions = await client.callTool({ name: "partial_compact_instructions", arguments: {} })
   const instructions_text = tool_text(instructions)
-  for (const expected of ["expected context hygiene", "Expected triggers", "roughly 10 substantive tool or command results", "Context-window reminder", "stock CLI worker's next model call is not smaller by itself"]) {
+  for (const expected of ["expected context hygiene", "Expected triggers", "roughly 10 substantive tool or command results", "Context-window reminder", "stock CLI worker's next model call is not smaller by itself", "ranges: [{ from_message_id, to_message_id, summary }]"]) {
     if (!instructions_text.includes(expected)) throw new Error(`missing instruction text: ${expected}`)
   }
   const first_record = await client.callTool({
     name: "partial_compact_record_message",
     arguments: { role: "user", text: "stale observation A", source: "smoke" },
   })
+  const first_record_text = tool_text(first_record)
+  assert_receipt_hides_visible_context(first_record_text)
+  if (first_record_text.includes("stale observation A")) {
+    throw new Error("record result exposed raw recorded text")
+  }
   if (parse_tool_json(first_record).native_context_rewritten !== false) {
     throw new Error("record result did not disclose native context boundary")
   }
@@ -77,17 +82,19 @@ try {
   if (!Array.isArray(before_visible_ids) || before_visible_ids.join(",") !== "msg000001,msg000002") {
     throw new Error(`unexpected pre-compaction visible ids: ${JSON.stringify(before_visible_ids)}`)
   }
-  const before_context = before.rendered_visible_context
-  if (typeof before_context !== "string") throw new Error("pre-compaction context missing rendered text")
-  for (const expected of ["stale observation A", "stale observation B"]) {
-    if (!before_context.includes(expected)) throw new Error(`missing pre-compaction visible context: ${expected}`)
+  const before_text = tool_text(before_ids)
+  assert_receipt_hides_visible_context(before_text)
+  if (before_text.includes("stale observation A") || before_text.includes("stale observation B")) {
+    throw new Error("pre-compaction id result exposed raw recorded text")
   }
   const compact = await client.callTool({
     name: "partial_compact",
     arguments: {
-      from_message_id: "msg000001",
-      to_message_id: "msg000002",
-      summary: "smoke summary replacing two stale observations",
+      ranges: [{
+        from_message_id: "msg000001",
+        to_message_id: "msg000002",
+        summary: "smoke summary replacing two stale observations",
+      }],
     },
   })
   const ledger = readFileSync(ledger_path, "utf-8")
@@ -99,13 +106,10 @@ try {
     throw new Error(`unexpected compaction visible ids: ${JSON.stringify(compact_visible_ids)}`)
   }
   if (compact_result.native_context_rewritten !== false) throw new Error("MCP result did not disclose native context boundary")
-  const compact_context = compact_result.rendered_visible_context
-  if (typeof compact_context !== "string") throw new Error("compaction result missing rendered context")
-  if (!compact_context.includes("smoke summary replacing two stale observations")) {
-    throw new Error("tool result did not include compaction summary")
-  }
-  if (compact_context.includes("stale observation A") || compact_context.includes("stale observation B")) {
-    throw new Error("tool result still exposed compacted raw observations")
+  const compact_text = tool_text(compact)
+  assert_receipt_hides_visible_context(compact_text)
+  if (compact_text.includes("stale observation A") || compact_text.includes("stale observation B")) {
+    throw new Error("compaction result exposed compacted raw observations")
   }
   const after_ids = await client.callTool({
     name: "partial_compact_current_session_message_ids",
@@ -116,15 +120,27 @@ try {
   if (!Array.isArray(after_visible_ids) || after_visible_ids.join(",") !== "cmp000001") {
     throw new Error(`unexpected post-compaction visible ids: ${JSON.stringify(after_visible_ids)}`)
   }
-  const after_context = after.rendered_visible_context
-  if (typeof after_context !== "string") throw new Error("post-compaction context missing rendered text")
-  if (!after_context.includes("smoke summary replacing two stale observations")) {
-    throw new Error("post-compaction context did not include compaction summary")
+  const after_text = tool_text(after_ids)
+  assert_receipt_hides_visible_context(after_text)
+  if (after_text.includes("stale observation A") || after_text.includes("stale observation B")) {
+    throw new Error("post-compaction id result exposed compacted raw observations")
   }
-  if (after_context.includes("stale observation A") || after_context.includes("stale observation B")) {
-    throw new Error("post-compaction context still exposed compacted raw observations")
+  const visible_context_path = compact_result.visible_context_path
+  if (typeof visible_context_path !== "string") throw new Error("compaction result missing visible_context_path")
+  const artifact_context = readFileSync(visible_context_path, "utf-8")
+  if (!artifact_context.includes("smoke summary replacing two stale observations")) {
+    throw new Error("visible context artifact did not include compaction summary")
+  }
+  if (artifact_context.includes("stale observation A") || artifact_context.includes("stale observation B")) {
+    throw new Error("visible context artifact still exposed compacted raw observations")
   }
   console.log(JSON.stringify({ ok: true, run_dir, ledger_path, tools: names }, null, 2))
 } finally {
   await client.close()
+}
+
+function assert_receipt_hides_visible_context(text: string): void {
+  for (const hidden of ["rendered_visible_context", "<system>", "<message", "<compacted"]) {
+    if (text.includes(hidden)) throw new Error(`tool receipt exposed visible context marker ${hidden}`)
+  }
 }

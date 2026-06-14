@@ -23,9 +23,11 @@ export class MockCodexAdapter implements AgentAdapter {
           tool_calls.push({
             name: "partial_compact",
             args: {
-              from_message_id: range.from_message_id,
-              to_message_id: range.to_message_id,
-              summary: "stale discovery: checked README and legacy staging audit log; both mention old 30000ms staging behavior and are not production evidence. Kept production config outside this compacted range.",
+              ranges: [{
+                from_message_id: range.from_message_id,
+                to_message_id: range.to_message_id,
+                summary: "stale discovery: checked README and legacy staging audit log; both mention old 30000ms staging behavior and are not production evidence. Kept production config outside this compacted range.",
+              }],
             },
           })
         }

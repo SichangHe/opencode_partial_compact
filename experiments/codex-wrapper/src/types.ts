@@ -21,10 +21,16 @@ export type VisibleEntry =
   | { kind: "message"; message: LedgerMessage }
   | { kind: "compaction"; record: CompactionRecord }
 
-export type PartialCompactArgs = {
+export type PartialCompactRange = {
   from_message_id: string
   to_message_id: string
   summary: string
+}
+
+export type PartialCompactArgs = PartialCompactRange
+
+export type PartialCompactToolArgs = {
+  ranges: PartialCompactRange[]
 }
 
 export type PartialCompactResult = {
@@ -36,10 +42,21 @@ export type PartialCompactResult = {
   error: string
 }
 
+export type PartialCompactRangesResult = {
+  ok: true
+  records: CompactionRecord[]
+  visible_message_ids: string[]
+  n_ranges_compacted: number
+  n_messages_replaced: number
+} | {
+  ok: false
+  error: string
+}
+
 export type AgentToolCall =
   | { name: "read_file"; args: { path: string } }
   | { name: "current_message_ids"; args: Record<string, never> }
-  | { name: "partial_compact"; args: PartialCompactArgs }
+  | { name: "partial_compact"; args: PartialCompactToolArgs }
 
 export type AgentTurnInput = {
   session_id: string

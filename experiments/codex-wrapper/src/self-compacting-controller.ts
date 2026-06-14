@@ -4,7 +4,7 @@ import {
   type CodexThreadTokenUsage,
 } from "./app-server-adapter.js"
 import { WrapperLedger } from "./ledger.js"
-import type { LedgerMessage, MessageRole, PartialCompactArgs, PartialCompactResult } from "./types.js"
+import type { LedgerMessage, MessageRole, PartialCompactArgs, PartialCompactRange, PartialCompactRangesResult, PartialCompactResult } from "./types.js"
 
 type DynamicToolCall = {
   tool: string
@@ -51,7 +51,7 @@ export type SelfCompactingControllerOptions = {
 
 const DEFAULT_SYSTEM_INSTRUCTIONS = [
   "You are Codex behind a PCODX self-compacting app-server controller.",
-  "Use message ids with partial_compact when old recorded context can be replaced by a faithful summary.",
+  "Use message ids with partial_compact ranges when old recorded context can be replaced by faithful summaries.",
   "The controller starts each future app-server turn from the compacted ledger render, so successful compaction reduces future model-visible context.",
 ].join("\n")
 
@@ -67,15 +67,26 @@ const DYNAMIC_TOOLS = [
   },
   {
     name: "partial_compact",
-    description: "Replace a contiguous range of prior PCODX ledger messages with a faithful summary for future app-server turns.",
+    description: "Replace one or more disjoint ranges of prior PCODX ledger messages with faithful summaries for future app-server turns.",
     inputSchema: {
       type: "object",
       properties: {
-        from_message_id: { type: "string" },
-        to_message_id: { type: "string" },
-        summary: { type: "string" },
+        ranges: {
+          type: "array",
+          minItems: 1,
+          items: {
+            type: "object",
+            properties: {
+              from_message_id: { type: "string" },
+              to_message_id: { type: "string" },
+              summary: { type: "string" },
+            },
+            required: ["from_message_id", "to_message_id", "summary"],
+            additionalProperties: false,
+          },
+        },
       },
-      required: ["from_message_id", "to_message_id", "summary"],
+      required: ["ranges"],
       additionalProperties: false,
     },
   },
@@ -108,6 +119,10 @@ export class SelfCompactingCodexController {
 
   partialCompact(args: PartialCompactArgs): PartialCompactResult {
     return this.ledger.partialCompact(args)
+  }
+
+  partialCompactRanges(ranges: PartialCompactRange[]): PartialCompactRangesResult {
+    return this.ledger.partialCompactRanges(ranges)
   }
 
   renderVisibleContext(): string {
@@ -257,19 +272,14 @@ export class SelfCompactingCodexController {
             visible_entry_ids: this.currentVisibleMessageIds(),
             future_model_visible_context_source: "pcodx app-server controller ledger render",
           }, null, 2),
-        }
+      }
       case "partial_compact": {
-        const args = parsePartialCompactArgs(call.arguments)
-        const result = this.partialCompact(args)
+        const ranges = parsePartialCompactRanges(call.arguments)
+        const result = this.partialCompactRanges(ranges)
         return {
           success: result.ok,
           compacted: result.ok,
-          text: JSON.stringify({
-            ...result,
-            future_model_context_rewritten_by_controller_on_next_turn: result.ok,
-            visible_message_ids: this.compactableMessageIds(),
-            visible_entry_ids: this.currentVisibleMessageIds(),
-          }, null, 2),
+          text: JSON.stringify(compactionReceipt(result, this.compactableMessageIds(), this.currentVisibleMessageIds()), null, 2),
         }
       }
       default:
@@ -309,15 +319,42 @@ function parseDynamicToolCall(params: unknown): DynamicToolCall {
   return { tool: params.tool, arguments: params.arguments }
 }
 
-function parsePartialCompactArgs(value: unknown): PartialCompactArgs {
+function parsePartialCompactRanges(value: unknown): PartialCompactRange[] {
   if (!isRecord(value)) throw new Error("partial_compact arguments must be an object")
-  const from_message_id = value.from_message_id
-  const to_message_id = value.to_message_id
-  const summary = value.summary
-  if (typeof from_message_id !== "string") throw new Error("partial_compact missing from_message_id")
-  if (typeof to_message_id !== "string") throw new Error("partial_compact missing to_message_id")
-  if (typeof summary !== "string") throw new Error("partial_compact missing summary")
-  return { from_message_id, to_message_id, summary }
+  const ranges = value.ranges
+  if (!Array.isArray(ranges) || ranges.length === 0) throw new Error("partial_compact missing ranges")
+  return ranges.map((range, idx) => {
+    if (!isRecord(range)) throw new Error(`partial_compact range ${idx} must be an object`)
+    const from_message_id = range.from_message_id
+    const to_message_id = range.to_message_id
+    const summary = range.summary
+    if (typeof from_message_id !== "string") throw new Error(`partial_compact range ${idx} missing from_message_id`)
+    if (typeof to_message_id !== "string") throw new Error(`partial_compact range ${idx} missing to_message_id`)
+    if (typeof summary !== "string") throw new Error(`partial_compact range ${idx} missing summary`)
+    return { from_message_id, to_message_id, summary }
+  })
+}
+
+function compactionReceipt(
+  result: PartialCompactRangesResult,
+  visible_message_ids: string[],
+  visible_entry_ids: string[],
+): Record<string, unknown> {
+  if (!result.ok) return { ok: false, error: result.error }
+  return {
+    ok: true,
+    n_ranges_compacted: result.n_ranges_compacted,
+    n_messages_replaced: result.n_messages_replaced,
+    compactions: result.records.map(record => ({
+      id: record.id,
+      from_message_id: record.from_message_id,
+      to_message_id: record.to_message_id,
+      n_messages_replaced: record.n_messages_replaced,
+    })),
+    future_model_context_rewritten_by_controller_on_next_turn: true,
+    visible_message_ids,
+    visible_entry_ids,
+  }
 }
 
 async function withTimeout<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
