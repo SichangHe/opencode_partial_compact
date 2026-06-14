@@ -13,8 +13,10 @@ await rm(RUN_DIR, { recursive: true, force: true })
 await mkdir(RUN_DIR, { recursive: true })
 const raw_a_path = join(RUN_DIR, "raw-a.txt")
 const raw_b_path = join(RUN_DIR, "raw-b.txt")
+const prompt_path = join(RUN_DIR, "prompt.txt")
 await writeFile(raw_a_path, bulkyRaw(RAW_A), "utf8")
 await writeFile(raw_b_path, bulkyRaw(RAW_B), "utf8")
+await writeFile(prompt_path, "Reply with BASELINE_OK and nothing else. Do not run tools.", "utf8")
 
 const first = cliJson("record", "--role", "tool", "--text-file", raw_a_path)
 cliJson("record", "--role", "assistant", "--text", "durable context between stale ranges")
@@ -22,8 +24,8 @@ const second = cliJson("record", "--role", "tool", "--text-file", raw_b_path)
 const before = cliJson("show")
 const baseline = cliJson(
   "turn",
-  "--prompt",
-  "Reply with BASELINE_OK and nothing else. Do not run tools.",
+  "--prompt-file",
+  prompt_path,
   "--timeout-ms",
   "120000",
 )

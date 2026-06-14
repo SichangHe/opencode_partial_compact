@@ -62,6 +62,12 @@
 - controller CLI
   - `bun run controller -- --run-dir runs/my-session --session-id my-session interactive`
   - starts a human-facing REPL backed by the self-compacting app-server controller
+  - manager launch wrapper: `bun run manager:agent -- --task-file TASK.md --root /path/to/work-logs --tmux-session opc --workdir /repo/or/task/workdir`
+  - the wrapper opens a tmux window, starts `interactive`, and sends manager worker defaults plus the task file as the first controller turn
+  - the wrapper injects manager launch context into the first turn: tmux target, task file, controller run dir, controller session id, and continuation command
+  - the wrapper prints `tmux_target`, `run_dir`, `session_id`, prompt files, continuation command, and the exact controller command
+  - default controller state uses a fresh timestamped directory under `$PCODX_CONTROLLER_RUN_ROOT` or the OS temp dir; pass `--run-dir` and `--session-id` to choose or continue a durable path
+  - use `--run-dir` and `--session-id` from that output to continue the same controller-owned agent later
   - plain input sends a Codex turn seeded from the current compacted ledger render
   - slash commands include `/ids`, `/show`, `/record <role> <text>`, `/compact <from_msg>..<to_msg> <summary>`, `/turn <prompt>`, and `/exit`
   - reuse the same `--run-dir` and `--session-id` to continue the controller-owned interactive session

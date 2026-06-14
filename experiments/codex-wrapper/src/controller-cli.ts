@@ -149,7 +149,7 @@ async function commandCompact(state: ControllerState, parsed: ParsedArgs): Promi
 }
 
 async function commandTurn(state: ControllerState, parsed: ParsedArgs): Promise<void> {
-  const prompt = requiredFlag(parsed, "prompt")
+  const prompt = await readPromptInput(parsed)
   const timeout_ms = parseTimeoutMs(parsed)
   const report = await runControllerTurn(state, prompt, timeout_ms)
   printJson({ ...report, last_turn_path: state.last_turn_path })
@@ -160,6 +160,8 @@ async function commandInteractive(state: ControllerState, parsed: ParsedArgs): P
   const timeout_ms = parseTimeoutMs(parsed)
   await saveState(state)
   printInteractiveBanner(state)
+  const initial_prompt = await readOptionalPromptInput(parsed)
+  if (initial_prompt !== null) await runInteractiveTurn(state, initial_prompt, timeout_ms)
   const rl = createInterface({ input: stdin, output: stdout, terminal: stdout.isTTY })
   rl.setPrompt("pcodx> ")
   if (stdout.isTTY) rl.prompt()
@@ -280,6 +282,23 @@ async function readTextInput(parsed: ParsedArgs): Promise<string> {
   if (text !== undefined) return text
   if (text_file !== undefined) return await readFile(text_file, "utf8")
   throw new Error("missing --text or --text-file")
+}
+
+async function readPromptInput(parsed: ParsedArgs): Promise<string> {
+  const prompt = await readOptionalPromptInput(parsed)
+  if (prompt === null) throw new Error("missing --prompt or --prompt-file")
+  return prompt
+}
+
+async function readOptionalPromptInput(parsed: ParsedArgs): Promise<string | null> {
+  const parts: string[] = []
+  for (const path of parsed.flags.get("prompt-file") ?? []) {
+    parts.push((await readFile(path, "utf8")).trimEnd())
+  }
+  const prompt = lastFlag(parsed, "prompt")
+  if (prompt !== undefined) parts.push(prompt)
+  if (parts.length === 0) return null
+  return parts.filter(part => part.length > 0).join("\n\n")
 }
 
 async function handleInteractiveLine(state: ControllerState, line: string, timeout_ms: number): Promise<boolean> {
@@ -437,8 +456,8 @@ function printHelp(): void {
     "  ids",
     "  show",
     "  compact --range <from_msg>..<to_msg> --summary <summary>",
-    "  turn --prompt <prompt> [--timeout-ms <ms>]",
-    "  interactive [--timeout-ms <ms>]",
+    "  turn (--prompt <prompt>|--prompt-file <path>...) [--timeout-ms <ms>]",
+    "  interactive [--prompt <prompt>|--prompt-file <path>...] [--timeout-ms <ms>]",
     "",
     "shared flags:",
     `  --run-dir <path>      default ${DEFAULT_RUN_DIR}`,

@@ -10,7 +10,7 @@ import {
   ContextWindowReminderTracker,
   renderContextWindowReminder,
 } from "../src/app-server-adapter.js"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -296,6 +296,33 @@ describe("controller CLI", () => {
   })
 })
 
+describe("manager agent launcher", () => {
+  it("builds isolated dry-run commands with launch context", async () => {
+    const run_dir = await mkdtemp(join(tmpdir(), "pcodx-manager-launch-test-"))
+    const task_file = join(run_dir, "task.md")
+    const worker_defaults = join(run_dir, "worker-defaults.md")
+    const run_root = join(run_dir, "runs")
+    await writeFile(task_file, "Validation task.", "utf8")
+    await writeFile(worker_defaults, "Worker defaults.", "utf8")
+    try {
+      const first = managerDryRun(run_dir, task_file, worker_defaults, run_root)
+      const second = managerDryRun(run_dir, task_file, worker_defaults, run_root)
+      expect(first.ok).toBe(true)
+      expect(first.dry_run).toBe(true)
+      expect(requireString(first.launch_command)).toContain("--prompt-file")
+      expect(requireString(first.launch_command)).toContain(worker_defaults)
+      expect(requireString(first.launch_command)).toContain(task_file)
+      expect(requireString(first.launch_command)).toContain("Manager launch context:")
+      expect(requireString(first.continue_command)).toContain(requireString(first.run_dir))
+      expect(requireString(first.continue_command)).toContain(requireString(first.session_id))
+      expect(requireString(first.run_dir)).not.toBe(requireString(second.run_dir))
+      expect(requireString(first.session_id)).not.toBe(requireString(second.session_id))
+    } finally {
+      await rm(run_dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe("context window reminders", () => {
   it("renders app-server token usage as turn additional context", () => {
     const tracker = new ContextWindowReminderTracker()
@@ -443,6 +470,35 @@ function cliText(run_dir: string, input: string): string {
   })
   if (result.status !== 0) throw new Error(`interactive controller CLI failed: ${result.stderr}`)
   return result.stdout
+}
+
+function managerDryRun(root: string, task_file: string, worker_defaults: string, run_root: string): Record<string, unknown> {
+  const result = spawnSync("bun", [
+    "run",
+    join(ROOT, "src", "manager-agent-launch.ts"),
+    "--dry-run",
+    "--root",
+    root,
+    "--task-file",
+    task_file,
+    "--tmux-session",
+    "opc",
+    "--workdir",
+    root,
+    "--worker-defaults",
+    worker_defaults,
+    "--run-root",
+    run_root,
+  ], {
+    encoding: "utf8",
+    timeout: 30000,
+  })
+  if (result.status !== 0) throw new Error(`manager launcher dry run failed: ${result.stderr}`)
+  const parsed = JSON.parse(result.stdout)
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("manager launcher did not return a JSON object")
+  }
+  return parsed as Record<string, unknown>
 }
 
 function expectReceiptHidesVisibleContext(text: string): void {

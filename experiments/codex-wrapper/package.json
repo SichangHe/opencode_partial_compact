@@ -10,6 +10,7 @@
     "test": "bun test",
     "demo": "bun run src/demo.ts",
     "controller": "bun run src/controller-cli.ts",
+    "manager:agent": "bun run src/manager-agent-launch.ts",
     "mcp:server": "bun run src/mcp-server.ts",
     "smoke:live-turn": "bun run src/live-turn-smoke.ts",
     "smoke:context-shrink": "bun run src/context-shrink-smoke.ts",
