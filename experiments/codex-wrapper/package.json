@@ -15,6 +15,7 @@
     "smoke:self-compact": "bun run src/self-compact-smoke.ts",
     "smoke:mcp": "bun run src/mcp-smoke.ts",
     "smoke:pcodx-startup": "bun run src/pcodx-startup-smoke.ts",
+    "verify:self-compaction": "bun run typecheck && bun run smoke:context-shrink && bun run smoke:self-compact",
     "probe:schema": "rm -rf runs/app-server-schema && codex app-server generate-ts --experimental --out runs/app-server-schema"
   },
   "devDependencies": {

@@ -51,6 +51,12 @@
   - asks Codex to call the controller `partial_compact` dynamic tool
   - starts the next real Codex app-server turn from the compacted controller render
   - fails if any generated raw compacted-away sentinel remains in the follow-up injected context or if next-turn app-server input tokens do not materially shrink
+- operator verification
+  - `bun run verify:self-compaction`
+  - runs typecheck, the app-server context-shrink smoke, and the dynamic self-compaction smoke
+  - use this as the safe acceptance check for the implemented native-transcript shrink path
+  - passing means future app-server controller turns are seeded from the compacted ledger render
+  - passing does not mean a stock CLI/MCP worker rewrote its already-running hidden transcript
 - pcodx MCP worker path
   - `pcodx` launches normal Codex with the `pcodx_partial_compact` MCP server
   - tools exposed by that server are `partial_compact_instructions`, `partial_compact_record_message`, `partial_compact_current_session_message_ids`, and `partial_compact`
@@ -72,6 +78,7 @@
   - current app-server schema cannot delete an arbitrary middle range from a running thread; `thread/rollback` only drops whole turns from the end
   - minimal working self-compaction uses a controller-owned ledger plus fresh app-server threads, because fresh threads can be seeded with only the compacted render
   - current stock CLI/MCP workers do not expose their live thread id, transcript mutation API, or app-server connection to the MCP server
+  - remaining boundary for resumed workers: manager/controller resume must start future work from `renderVisibleContext`; MCP-side ledger compaction alone is only durable state preservation
   - app-server reminder injection is based on completed-turn usage and a roughly 16k-token cadence, so it is a next-turn reminder rather than a live mid-turn hidden-context gauge
   - `codex debug prompt-input` renders the model-visible prompt item list, but does not report token usage
   - the PCODX MCP server cannot read live hidden native usage because Codex does not pass the real session id, session JSONL path, token counter, or pending hidden transcript state into MCP server calls
