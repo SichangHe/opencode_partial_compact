@@ -51,12 +51,14 @@
   - asks Codex to call the controller `partial_compact` dynamic tool
   - starts the next real Codex app-server turn from the compacted controller render
   - fails if any generated raw compacted-away sentinel remains in the follow-up injected context or if next-turn app-server input tokens do not materially shrink
+  - writes ignored receipts under `runs/self-compact-smoke`
 - operator verification
   - `bun run verify:self-compaction`
   - runs typecheck, the app-server context-shrink smoke, and the dynamic self-compaction smoke
   - use this as the safe acceptance check for the implemented native-transcript shrink path
   - passing means future app-server controller turns are seeded from the compacted ledger render
   - passing does not mean a stock CLI/MCP worker rewrote its already-running hidden transcript
+  - leaves no tracked receipt diffs; the self-compaction receipts are ignored generated files
 - pcodx MCP worker path
   - `pcodx` launches normal Codex with the `pcodx_partial_compact` MCP server
   - tools exposed by that server are `partial_compact_instructions`, `partial_compact_record_message`, `partial_compact_current_session_message_ids`, and `partial_compact`
