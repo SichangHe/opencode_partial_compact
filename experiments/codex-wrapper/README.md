@@ -91,6 +91,10 @@
   - concrete triggers include before manager compact/resume requests, before new broad exploration/verifier loops when prior recorded context is stale, after commit/push/report phases, after roughly 10 substantive tool or command results without compaction, or whenever context feels crowded enough to slow reasoning
   - context-window reminders in normal manager workers remain static startup instructions to watch Codex's context-used/status indicator; no dynamic MCP reminder exists because the server cannot read Codex's hidden native context usage
   - MCP context/compaction results return `native_context_rewritten: false` to prevent confusing sidecar ledger compaction with stock CLI transcript replacement
+  - worker feedback should keep these lanes separate:
+    - PCODX owns whether partial-compaction tools were available, usable, and triggered at the right times
+    - manager/report helpers own `omo_report.sh` message-file allocation policy, including private `--alloc-message-file` paths
+    - proof-domain harness docs own ignored `runs/` artifact review policy, including explicit artifact, verifier-log, and diff paths
   - `bun run smoke:mcp` verifies the server tool list and records a real compaction in a ledger
   - `bun run smoke:pcodx-startup` verifies Codex receives the shared text through `developer_instructions`
   - root cause of the live PCODX failure: this path changes only the MCP sidecar ledger and tool result; it does not rewrite Codex's hidden native transcript, so the next stock CLI model call still carries the original transcript
