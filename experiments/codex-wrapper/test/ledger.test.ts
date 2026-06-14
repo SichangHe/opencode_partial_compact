@@ -95,6 +95,26 @@ describe("WrapperLedger", () => {
     expect(ledger.compactions).toHaveLength(0)
     expect(ledger.currentVisibleMessageIds()).toEqual([first.id, second.id, third.id])
   })
+
+  it("loads snapshots with validated ids and references", () => {
+    const ledger = new WrapperLedger("test-session")
+    const first = ledger.append("tool", "raw")
+    ledger.partialCompact({
+      from_message_id: first.id,
+      to_message_id: first.id,
+      summary: "summary",
+    })
+
+    const loaded = WrapperLedger.fromSnapshot(ledger.snapshot())
+    expect(loaded.currentVisibleMessageIds()).toEqual(["cmp000001"])
+    expect(loaded.append("assistant", "next").id).toBe("msg000002")
+
+    const invalid = ledger.snapshot() as {
+      compactions: Array<{ from_message_id: string }>
+    }
+    invalid.compactions[0] = { ...invalid.compactions[0], from_message_id: "msg999999" }
+    expect(() => WrapperLedger.fromSnapshot(invalid)).toThrow("references missing from_message_id")
+  })
 })
 
 describe("pcodx MCP sidecar", () => {
@@ -212,6 +232,44 @@ describe("SelfCompactingCodexController", () => {
   })
 })
 
+describe("controller CLI", () => {
+  it("persists selected compaction ranges for the next model-visible context", async () => {
+    const run_dir = await mkdtemp(join(tmpdir(), "pcodx-controller-cli-test-"))
+    const raw_a = "PCODX_CLI_RAW_SENTINEL_A ".repeat(400)
+    const raw_b = "PCODX_CLI_RAW_SENTINEL_B ".repeat(400)
+    try {
+      const first = cliJson(run_dir, "record", "--role", "tool", "--text", raw_a)
+      cliJson(run_dir, "record", "--role", "assistant", "--text", "durable middle")
+      const second = cliJson(run_dir, "record", "--role", "tool", "--text", raw_b)
+      const before = cliJson(run_dir, "show")
+      const before_chars = requireNumber(before.visible_context_chars)
+      const compact = cliJson(
+        run_dir,
+        "compact",
+        "--range",
+        `${requireString(first.message_id)}..${requireString(first.message_id)}`,
+        "--summary",
+        "first CLI raw sentinel summary",
+        "--range",
+        `${requireString(second.message_id)}..${requireString(second.message_id)}`,
+        "--summary",
+        "second CLI raw sentinel summary",
+      )
+      expect(compact.ok).toBe(true)
+      expect(requireNumber(compact.after_visible_context_chars)).toBeLessThan(before_chars / 4)
+      const visible_context_path = requireString(compact.model_visible_context_path)
+      const visible_context = await readFile(visible_context_path, "utf8")
+      expect(visible_context).toContain("first CLI raw sentinel summary")
+      expect(visible_context).toContain("second CLI raw sentinel summary")
+      expect(visible_context).toContain("durable middle")
+      expect(visible_context).not.toContain("PCODX_CLI_RAW_SENTINEL_A")
+      expect(visible_context).not.toContain("PCODX_CLI_RAW_SENTINEL_B")
+    } finally {
+      await rm(run_dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe("context window reminders", () => {
   it("renders app-server token usage as turn additional context", () => {
     const tracker = new ContextWindowReminderTracker()
@@ -320,6 +378,27 @@ function toolJson(result: unknown): Record<string, unknown> {
 function requireString(value: unknown): string {
   if (typeof value !== "string") throw new Error("expected string")
   return value
+}
+
+function requireNumber(value: unknown): number {
+  if (typeof value !== "number") throw new Error("expected number")
+  return value
+}
+
+function cliJson(run_dir: string, ...args: string[]): Record<string, unknown> {
+  const result = Bun.spawnSync({
+    cmd: ["bun", "run", join(ROOT, "src", "controller-cli.ts"), "--run-dir", run_dir, "--session-id", "cli-test", ...args],
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  if (!result.success) {
+    throw new Error(`controller CLI failed: ${new TextDecoder().decode(result.stderr)}`)
+  }
+  const parsed = JSON.parse(new TextDecoder().decode(result.stdout))
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("controller CLI did not return a JSON object")
+  }
+  return parsed as Record<string, unknown>
 }
 
 function expectReceiptHidesVisibleContext(text: string): void {

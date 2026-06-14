@@ -47,6 +47,7 @@ export type SelfCompactingControllerOptions = {
   session_id: string
   system_instructions?: string
   cwd?: string
+  ledger?: WrapperLedger
 }
 
 const DEFAULT_SYSTEM_INSTRUCTIONS = [
@@ -98,7 +99,10 @@ export class SelfCompactingCodexController {
   readonly cwd: string
 
   constructor(options: SelfCompactingControllerOptions) {
-    this.ledger = new WrapperLedger(options.session_id)
+    this.ledger = options.ledger ?? new WrapperLedger(options.session_id)
+    if (this.ledger.session_id !== options.session_id) {
+      throw new Error(`ledger session_id ${this.ledger.session_id} does not match controller session_id ${options.session_id}`)
+    }
     this.system_instructions = options.system_instructions ?? DEFAULT_SYSTEM_INSTRUCTIONS
     this.cwd = options.cwd ?? process.cwd()
   }

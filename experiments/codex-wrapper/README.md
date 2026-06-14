@@ -54,11 +54,22 @@
   - writes ignored receipts under `runs/self-compact-smoke`
 - operator verification
   - `bun run verify:self-compaction`
-  - runs typecheck, the app-server context-shrink smoke, and the dynamic self-compaction smoke
+  - runs typecheck, unit/CLI tests, the app-server context-shrink smoke, the dynamic self-compaction smoke, and the controller CLI smoke
   - use this as the safe acceptance check for the implemented native-transcript shrink path
   - passing means future app-server controller turns are seeded from the compacted ledger render
   - passing does not mean a stock CLI/MCP worker rewrote its already-running hidden transcript
   - leaves no tracked receipt diffs; the self-compaction receipts are ignored generated files
+- controller CLI
+  - `bun run controller -- --run-dir runs/my-session record --role tool --text-file raw-context.txt`
+  - `bun run controller -- --run-dir runs/my-session ids`
+  - `bun run controller -- --run-dir runs/my-session compact --range msg000001..msg000001 --summary "faithful summary of stale context"`
+  - `bun run controller -- --run-dir runs/my-session turn --prompt "continue from the compacted context"`
+  - the `compact` command writes `runs/my-session/model-visible-context.txt`
+  - the next `turn` command injects that compacted ledger render into a fresh Codex app-server thread
+  - CLI evidence includes `before_visible_context_chars`, `after_visible_context_chars`, `baseline_input_tokens`, `compacted_input_tokens`, and `model_visible_context_path`
+  - `bun run smoke:controller-cli` runs this workflow against real `codex app-server`
+  - use this wrapper workflow when the requirement is to change future model-visible context
+  - do not use the MCP-only sidecar workflow as evidence of stock CLI transcript shrink
 - pcodx MCP worker path
   - `pcodx` launches normal Codex with the `pcodx_partial_compact` MCP server
   - tools exposed by that server are `partial_compact_instructions`, `partial_compact_record_message`, `partial_compact_current_session_message_ids`, and `partial_compact`
