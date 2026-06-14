@@ -23,6 +23,23 @@
     "README.md",
     "LICENSE"
   ],
+  "fmtm": {
+    "include": [
+      "docs"
+    ],
+    "exclude": [
+      "docs/tmp/**",
+      "docs/temp/**",
+      "docs/plans/**",
+      "docs/tasks/**",
+      "docs/work-manager/**",
+      "docs/workmanager/**"
+    ],
+    "line-width": 80,
+    "emphasis-marker": "*",
+    "strong-marker": "**",
+    "indentation": "    "
+  },
   "scripts": {
     "build": "tsc && rm -rf dist/prompts && cp -R src/prompts dist/prompts",
     "typecheck": "tsc --noEmit",

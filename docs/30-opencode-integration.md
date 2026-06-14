@@ -57,13 +57,13 @@ export default mod
 
 Empirically validated (POC):
 
-1. User runs `bun publish` or installs from the repo. We support
-   loading by `file://` URI in `opencode.json`'s `plugin` array — no
-   npm publish required for local use.
-2. User adds `"opencode-partial-compact"` (npm name) or
-   `"file:///abs/path/to/dist/index.js"` to their `plugin` array.
-3. For the slash command, user also adds `"opencode-partial-compact"`
-   or `"file:///abs/path/to/dist/tui.js"` to TUI plugin config.
+1. User runs `bun publish` or installs from the repo.
+    We support loading by `file://` URI in `opencode.json`'s `plugin`
+    array — no npm publish required for local use.
+1. User adds `"opencode-partial-compact"` (npm name) or
+    `"file:///abs/path/to/dist/index.js"` to their `plugin` array.
+1. For the slash command, user also adds `"opencode-partial-compact"` or
+    `"file:///abs/path/to/dist/tui.js"` to TUI plugin config.
 
 ## Hook execution flow
 
@@ -88,35 +88,42 @@ Opencode native compaction starts
     [opencode-partial-compact]                (safely prune stale sidecar records)
 ```
 
-We **MUST** run before oh-my-openagent. The check is deferred to first hook use
-because `server()` must not call the Opencode HTTP client during bootstrap;
-we error out if the plugin order is wrong.
+We **MUST** run before oh-my-openagent.
+The check is deferred to first hook use because `server()`
+must not call the Opencode HTTP client during bootstrap; we error out if
+the plugin order is wrong.
 
 ## Hooks we consume
 
-- `Hooks.tool` — register `partial_compact` plus the read-only
-  `partial_compact_instructions` and `partial_compact_current_session_message_ids`
-  helper tools.
+- `Hooks.tool` — register `partial_compact`
+    plus the read-only `partial_compact_instructions` and
+    `partial_compact_current_session_message_ids` helper tools.
 - `experimental.chat.messages.transform` — rewrite the view.
-- `experimental.chat.system.transform` — inject a mandatory partial-compaction
-  reminder after visible context grows. The reminder is intentionally compact:
-  `current context window: XXk (yy% full)`. Agents can call
-  `partial_compact_instructions` for the full compaction policy and
-  `partial_compact_current_session_message_ids` for ordered current-session
-  `msg...` IDs after existing partial compactions are applied.
-  `reminder_interval_tokens` remains the
-  configured target cadence; when a known model context window is smaller than
-  that target, the runtime clamps the effective interval to an internal ~80%
-  safety point.
-- `partial_compact` records a fresh post-compaction visible-token estimate after
-  each successful write. This makes the reminder cadence count from the compacted
-  view immediately instead of waiting for the next system hook to notice the
-  shrink.
+- `experimental.chat.system.transform`
+    — inject a mandatory partial-compaction reminder after visible context
+    grows.
+    The reminder is intentionally compact: `current context window: XXk
+    (yy% full)`.
+    Agents can call `partial_compact_instructions` for
+    the full compaction policy and
+    `partial_compact_current_session_message_ids` for
+    ordered current-session `msg...`
+    IDs after existing partial compactions are applied.
+    `reminder_interval_tokens` remains the configured target cadence; when
+    a known model context window is smaller than that target,
+    the runtime clamps the effective interval to an internal ~80% safety point.
+- `partial_compact`
+    records a fresh post-compaction visible-token estimate after each
+    successful write.
+    This makes the reminder cadence count from
+    the compacted view immediately instead of waiting for
+    the next system hook to notice the shrink.
 
-We use `experimental.session.compacting` as a last-resort native overflow
-fallback and `experimental.compaction.autocontinue` to keep synthetic
-continuation enabled only after overflow fallback. We do NOT consume
-`chat.params`.
+We use `experimental.session.compacting` as
+a last-resort native overflow fallback and
+`experimental.compaction.autocontinue` to
+keep synthetic continuation enabled only after overflow fallback.
+We do NOT consume `chat.params`.
 
 ## Tool execute path
 
@@ -131,13 +138,13 @@ async execute(args, ctx) {
 ```
 
 The next LLM call's `messages.transform` will see the new record and
-collapse the range. No reload step needed — state is in-process
-between calls.
+collapse the range. No reload step needed — state is in-process between calls.
 
 ## Configuration
 
-Project-local `.opencode/opencode-partial-compact.jsonc` or user-global
-`~/.config/opencode/opencode-partial-compact.jsonc`. Initial schema:
+Project-local `.opencode/opencode-partial-compact.jsonc` or
+user-global `~/.config/opencode/opencode-partial-compact.jsonc`.
+Initial schema:
 
 ```jsonc
 {
@@ -150,21 +157,24 @@ Project-local `.opencode/opencode-partial-compact.jsonc` or user-global
 }
 ```
 
-No `inject_id_tags`, no `min_age_parts`, no `warn_on_plugin_order` —
-all dropped per v0 scope or hardened to errors.
+No `inject_id_tags`, no `min_age_parts`, no `warn_on_plugin_order`
+— all dropped per v0 scope or hardened to errors.
 
 ## Boundaries
 
-- Opencode's current auto-compaction trigger can still be based on the previous
-  assistant message's recorded token usage. The plugin cannot rewrite that
-  already-recorded number, so it disables native auto-compaction before the
-  scheduler runs. If a native compaction path still starts near overflow, the
-  plugin allows it as a last-resort recovery fallback.
-- Therefore this plugin enforces Opencode `compaction.auto=false` through the
-  merged-config hook and keeps a lazy fail-safe check. Native triggers can fire
-  before chat transforms recompute the partial-compacted effective context, so
-  runtime config enforcement is the primary guard.
-- Automatic native compaction is disabled with `compaction.auto=false` by the
-  plugin config hook. `experimental.session.compacting` is allowed to proceed as
-  an overflow fallback so high-context sessions compact instead of stopping. We
-  do not inject partial summaries into native compaction prompts.
+- Opencode's current auto-compaction trigger can still be based on
+    the previous assistant message's recorded token usage.
+    The plugin cannot rewrite that already-recorded number, so
+    it disables native auto-compaction before the scheduler runs.
+    If a native compaction path still starts near overflow,
+    the plugin allows it as a last-resort recovery fallback.
+- Therefore this plugin enforces Opencode `compaction.auto=false` through
+    the merged-config hook and keeps a lazy fail-safe check.
+    Native triggers can fire before chat transforms recompute the
+    partial-compacted effective context, so
+    runtime config enforcement is the primary guard.
+- Automatic native compaction is disabled with `compaction.auto=false` by
+    the plugin config hook.
+    `experimental.session.compacting` is allowed to proceed as
+    an overflow fallback so high-context sessions compact instead of stopping.
+    We do not inject partial summaries into native compaction prompts.
