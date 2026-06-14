@@ -4,6 +4,7 @@ import { runDemo } from "../src/demo.js"
 import { SelfCompactingCodexController } from "../src/self-compacting-controller.js"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
+import { spawnSync } from "node:child_process"
 import {
   CONTEXT_WINDOW_REMINDER_CONTEXT_KEY,
   ContextWindowReminderTracker,
@@ -268,6 +269,31 @@ describe("controller CLI", () => {
       await rm(run_dir, { recursive: true, force: true })
     }
   })
+
+  it("offers an interactive shell for recording and compacting context", async () => {
+    const run_dir = await mkdtemp(join(tmpdir(), "pcodx-controller-cli-interactive-test-"))
+    try {
+      const output = cliText(run_dir, [
+        "/record tool PCODX_INTERACTIVE_RAW_SENTINEL",
+        "/ids",
+        "/compact msg000001..msg000001 interactive raw sentinel summary",
+        "/show",
+        "/exit",
+        "",
+      ].join("\n"))
+      expect(output).toContain("pcodx interactive Codex CLI")
+      expect(output).toContain("recorded msg000001")
+      expect(output).toContain("compacted 1 range")
+      expect(output).toContain("----- context -----")
+      expect(output).toContain("interactive raw sentinel summary")
+      expect(output).not.toContain("PCODX_INTERACTIVE_RAW_SENTINEL")
+      const visible_context = await readFile(join(run_dir, "model-visible-context.txt"), "utf8")
+      expect(visible_context).toContain("interactive raw sentinel summary")
+      expect(visible_context).not.toContain("PCODX_INTERACTIVE_RAW_SENTINEL")
+    } finally {
+      await rm(run_dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe("context window reminders", () => {
@@ -399,6 +425,24 @@ function cliJson(run_dir: string, ...args: string[]): Record<string, unknown> {
     throw new Error("controller CLI did not return a JSON object")
   }
   return parsed as Record<string, unknown>
+}
+
+function cliText(run_dir: string, input: string): string {
+  const result = spawnSync("bun", [
+    "run",
+    join(ROOT, "src", "controller-cli.ts"),
+    "--run-dir",
+    run_dir,
+    "--session-id",
+    "cli-interactive-test",
+    "interactive",
+  ], {
+    input,
+    encoding: "utf8",
+    timeout: 30000,
+  })
+  if (result.status !== 0) throw new Error(`interactive controller CLI failed: ${result.stderr}`)
+  return result.stdout
 }
 
 function expectReceiptHidesVisibleContext(text: string): void {

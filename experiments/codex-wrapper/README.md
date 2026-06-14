@@ -60,6 +60,11 @@
   - passing does not mean a stock CLI/MCP worker rewrote its already-running hidden transcript
   - leaves no tracked receipt diffs; the self-compaction receipts are ignored generated files
 - controller CLI
+  - `bun run controller -- --run-dir runs/my-session --session-id my-session interactive`
+  - starts a human-facing REPL backed by the self-compacting app-server controller
+  - plain input sends a Codex turn seeded from the current compacted ledger render
+  - slash commands include `/ids`, `/show`, `/record <role> <text>`, `/compact <from_msg>..<to_msg> <summary>`, `/turn <prompt>`, and `/exit`
+  - reuse the same `--run-dir` and `--session-id` to continue the controller-owned interactive session
   - `bun run controller -- --run-dir runs/my-session record --role tool --text-file raw-context.txt`
   - `bun run controller -- --run-dir runs/my-session ids`
   - `bun run controller -- --run-dir runs/my-session compact --range msg000001..msg000001 --summary "faithful summary of stale context"`
