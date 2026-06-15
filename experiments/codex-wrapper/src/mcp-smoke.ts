@@ -49,7 +49,7 @@ try {
   await client.connect(transport)
   const tools = await client.listTools()
   const names = tools.tools.map(tool => tool.name).sort()
-  for (const expected of ["partial_compact", "partial_compact_current_session_message_ids", "partial_compact_instructions", "partial_compact_record_message"]) {
+  for (const expected of ["partial_compact", "partial_compact_current_ids", "partial_compact_current_session_message_ids", "partial_compact_instructions", "partial_compact_record_message"]) {
     if (!names.includes(expected)) throw new Error(`missing MCP tool: ${expected}`)
   }
   const instructions = await client.callTool({ name: "partial_compact_instructions", arguments: {} })
@@ -74,7 +74,7 @@ try {
     arguments: { role: "assistant", text: "stale observation B", source: "smoke" },
   })
   const before_ids = await client.callTool({
-    name: "partial_compact_current_session_message_ids",
+    name: "partial_compact_current_ids",
     arguments: {},
   })
   const before = parse_tool_json(before_ids)
@@ -112,7 +112,7 @@ try {
     throw new Error("compaction result exposed compacted raw observations")
   }
   const after_ids = await client.callTool({
-    name: "partial_compact_current_session_message_ids",
+    name: "partial_compact_current_ids",
     arguments: {},
   })
   const after = parse_tool_json(after_ids)

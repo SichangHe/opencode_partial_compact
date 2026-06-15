@@ -83,7 +83,9 @@
   - do not use the MCP-only sidecar workflow as evidence of stock CLI transcript shrink
 - pcodx MCP worker path
   - `pcodx` launches normal Codex with the `pcodx_partial_compact` MCP server
-  - tools exposed by that server are `partial_compact_instructions`, `partial_compact_record_message`, `partial_compact_current_session_message_ids`, and `partial_compact`
+  - tools exposed by that server are `partial_compact_instructions`, `partial_compact_record_message`, `partial_compact_current_ids`, `partial_compact_current_session_message_ids`, and `partial_compact`
+  - worker startup instructions use `partial_compact_current_ids` because the fully namespaced Codex function name stays within the 64-character tool-name limit
+  - `partial_compact_current_session_message_ids` remains a raw MCP compatibility alias for existing callers
   - the MCP server writes a sidecar ledger at `PCODX_LEDGER_PATH`, defaulting under `/tmp/pcodx-runs`
   - `src/pcodx-instructions.ts` is the shared startup/tool instruction source for workers
   - `partial_compact_instructions` returns the same text that `pcodx` injects at session start

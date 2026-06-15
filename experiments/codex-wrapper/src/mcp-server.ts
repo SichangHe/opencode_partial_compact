@@ -72,33 +72,44 @@ server.registerTool(
 )
 
 server.registerTool(
-  "partial_compact_current_session_message_ids",
+  "partial_compact_current_ids",
   {
     title: "List visible pcodx message ids",
     description: "Return the current visible ids from the pcodx sidecar ledger.",
   },
-  () => {
-    writeVisibleContextArtifact(ledger)
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(
-            {
-              ok: true,
-              visible_message_ids: ledger.currentVisibleMessageIds(),
-              ledger_path,
-              visible_context_path,
-              native_context_rewritten: false,
-            },
-            null,
-            2,
-          ),
-        },
-      ],
-    }
-  },
+  current_session_message_ids,
 )
+
+server.registerTool(
+  "partial_compact_current_session_message_ids",
+  {
+    title: "List visible pcodx message ids",
+    description: "Compatibility alias for partial_compact_current_ids.",
+  },
+  current_session_message_ids,
+)
+
+function current_session_message_ids() {
+  writeVisibleContextArtifact(ledger)
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(
+          {
+            ok: true,
+            visible_message_ids: ledger.currentVisibleMessageIds(),
+            ledger_path,
+            visible_context_path,
+            native_context_rewritten: false,
+          },
+          null,
+          2,
+        ),
+      },
+    ],
+  }
+}
 
 server.registerTool(
   "partial_compact",

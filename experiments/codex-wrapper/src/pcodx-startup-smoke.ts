@@ -18,13 +18,24 @@ if (!proc.success) {
 }
 const prompt_items = JSON.parse(new TextDecoder().decode(proc.stdout)) as PromptItem[]
 const developer_text = developer_prompt_text(prompt_items)
+const expected_tool_names = [
+  "mcp__pcodx_partial_compact__partial_compact_record_message",
+  "mcp__pcodx_partial_compact__partial_compact_current_ids",
+  "mcp__pcodx_partial_compact__partial_compact",
+]
 for (const expected of [
   "You are running in pcodx, Partial-Compactable cODeX mode.",
   `ledger_path: ${ledger_path}`,
   "Context-window reminder",
-  "mcp__pcodx_partial_compact__partial_compact",
+  ...expected_tool_names,
 ]) {
   if (!developer_text.includes(expected)) throw new Error(`missing startup instruction: ${expected}`)
+}
+for (const expected_tool_name of expected_tool_names) {
+  if (expected_tool_name.length > 64) throw new Error(`startup tool name is too long for Codex: ${expected_tool_name}`)
+}
+if (developer_text.includes("partial_compact_current_session_message_ids")) {
+  throw new Error("startup instructions still reference the long current-id tool name")
 }
 const expected_text = pcodx_startup_instructions(ledger_path)
 if (!developer_text.includes(expected_text)) throw new Error("developer prompt does not contain the shared startup instruction")

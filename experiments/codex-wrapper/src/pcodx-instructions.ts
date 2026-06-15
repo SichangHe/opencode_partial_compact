@@ -7,12 +7,12 @@ export function pcodx_startup_instructions(ledger_path: string): string {
     "Start recording early: use partial_compact_record_message for compactable working memory after startup context, each completed investigation or verifier loop, each resolved detour, and any large command/tool output once its durable takeaway is known.",
     "Expected triggers: compact before asking the manager to compact or resume you, before starting a new broad exploration/verifier loop when prior recorded context is stale, after a commit/push/report phase, after roughly 10 substantive tool or command results without compaction, or whenever context feels crowded enough to slow reasoning.",
     "Context-window reminder: watch any available context-used/status indicator; if it is high or rising quickly, record durable state, compact stale recorded ranges, or ask the manager to compact/resume with the tmux target, task file, and context to preserve.",
-    "Concrete action: call partial_compact_current_session_message_ids, choose every disjoint recorded range whose raw text is no longer needed, then call partial_compact once with ranges: [{ from_message_id, to_message_id, summary }].",
+    "Concrete action: call partial_compact_current_ids, choose every disjoint recorded range whose raw text is no longer needed, then call partial_compact once with ranges: [{ from_message_id, to_message_id, summary }].",
     "If no recorded range is safe to compact, record a short status message explaining the active goal, preserved constraints, current files, verifier/test state, blockers, and next action so a later compaction has useful material.",
     "After compaction, rely on the compact receipt, visible_context_path, and ledger artifact for compacted working memory.",
     "Before exiting a non-trivial task, leave the ledger either compacted or with a clear reason no recorded range was safe to compact.",
     "Caveat: these MCP tools do not rewrite Codex's hidden native transcript, so a stock CLI worker's next model call is not smaller by itself; actual shrink requires an app-server controller or manager resume using visible_context_path.",
-    "Available MCP tools: mcp__pcodx_partial_compact__partial_compact_record_message, mcp__pcodx_partial_compact__partial_compact_current_session_message_ids, and mcp__pcodx_partial_compact__partial_compact.",
+    "Available MCP tools: mcp__pcodx_partial_compact__partial_compact_record_message, mcp__pcodx_partial_compact__partial_compact_current_ids, and mcp__pcodx_partial_compact__partial_compact.",
   ].join("\n")
 }
 
