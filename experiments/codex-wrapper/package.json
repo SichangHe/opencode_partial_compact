@@ -18,7 +18,7 @@
     "smoke:controller-cli": "bun run src/controller-cli-smoke.ts",
     "smoke:mcp": "bun run src/mcp-smoke.ts",
     "smoke:pcodx-startup": "bun run src/pcodx-startup-smoke.ts",
-    "verify:self-compaction": "bun run typecheck && bun test && bun run smoke:context-shrink && bun run smoke:self-compact && bun run smoke:controller-cli",
+    "verify:self-compaction": "bun run src/verify-self-compaction.ts",
     "probe:schema": "rm -rf runs/app-server-schema && codex app-server generate-ts --experimental --out runs/app-server-schema"
   },
   "devDependencies": {

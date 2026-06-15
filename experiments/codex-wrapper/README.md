@@ -44,6 +44,7 @@
   - builds a bulky ledger, records the raw render, compacts the bulky range, and records the compacted render
   - starts real `codex app-server` turns for both renders
   - fails unless the compacted render has materially lower completed-turn `last.inputTokens`
+  - writes raw and compacted model-visible context files plus `runs/context-shrink-smoke/result.json`
   - this verifies the model-visible shrink requirement at the app-server controller boundary
 - self-compacting controller smoke
   - `bun run smoke:self-compact`
@@ -51,14 +52,16 @@
   - asks Codex to call the controller `partial_compact` dynamic tool
   - starts the next real Codex app-server turn from the compacted controller render
   - fails if any generated raw compacted-away sentinel remains in the follow-up injected context or if next-turn app-server input tokens do not materially shrink
-  - writes ignored receipts under `runs/self-compact-smoke`
+  - writes raw-turn and follow-up model-visible context files plus `runs/self-compact-smoke/result.json`
 - operator verification
   - `bun run verify:self-compaction`
   - runs typecheck, unit/CLI tests, the app-server context-shrink smoke, the dynamic self-compaction smoke, and the controller CLI smoke
-  - use this as the safe acceptance check for the implemented native-transcript shrink path
+  - use this as the safe acceptance check for controller-owned app-server next-turn shrink
+  - writes `runs/verify-self-compaction/<run-id>/report.json` and `runs/verify-self-compaction/<run-id>/report.md`
+  - the report records raw input tokens, compacted input tokens, shrink tokens, shrink fraction, artifact paths, and context-file hashes
   - passing means future app-server controller turns are seeded from the compacted ledger render
   - passing does not mean a stock CLI/MCP worker rewrote its already-running hidden transcript
-  - leaves no tracked receipt diffs; the self-compaction receipts are ignored generated files
+  - generated verifier artifacts are evidence for the controller path only and are isolated per verifier run
 - controller CLI
   - `bun run controller -- --run-dir runs/my-session --session-id my-session interactive`
   - starts a human-facing REPL backed by the self-compacting app-server controller
@@ -77,7 +80,8 @@
   - `bun run controller -- --run-dir runs/my-session turn --prompt "continue from the compacted context"`
   - the `compact` command writes `runs/my-session/model-visible-context.txt`
   - the next `turn` command injects that compacted ledger render into a fresh Codex app-server thread
-  - CLI evidence includes `before_visible_context_chars`, `after_visible_context_chars`, `baseline_input_tokens`, `compacted_input_tokens`, and `model_visible_context_path`
+  - each `turn` writes a unique `runs/my-session/turns/<thread-id>-model-visible-context.txt` artifact and updates `last-turn-model-visible-context.txt`
+  - CLI evidence includes `before_visible_context_chars`, `after_visible_context_chars`, `baseline_input_tokens`, `compacted_input_tokens`, `shrink_fraction`, and baseline/follow-up context paths
   - `bun run smoke:controller-cli` runs this workflow against real `codex app-server`
   - use this wrapper workflow when the requirement is to change future model-visible context
   - do not use the MCP-only sidecar workflow as evidence of stock CLI transcript shrink

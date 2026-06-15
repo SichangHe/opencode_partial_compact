@@ -4,7 +4,12 @@ import { fileURLToPath } from "node:url"
 import { SelfCompactingCodexController } from "./self-compacting-controller.js"
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
-const RUN_DIR = join(ROOT, "runs", "self-compact-smoke")
+const RUN_DIR = process.env.PCODX_SELF_COMPACT_RUN_DIR ?? join(ROOT, "runs", "self-compact-smoke")
+const VISIBLE_BEFORE_PATH = join(RUN_DIR, "visible-before-compaction.txt")
+const VISIBLE_AFTER_PATH = join(RUN_DIR, "visible-after-compaction.txt")
+const RAW_TURN_CONTEXT_PATH = join(RUN_DIR, "raw-turn-model-visible-context.txt")
+const FOLLOW_UP_CONTEXT_PATH = join(RUN_DIR, "follow-up-model-visible-context.txt")
+const RESULT_PATH = join(RUN_DIR, "result.json")
 const SUMMARY_PHRASE = "green-matrix-5711"
 const SUMMARY = `Compacted smoke evidence kept only the durable phrase ${SUMMARY_PHRASE}; raw alpha and beta sentinel lines were stale.`
 const MIN_ABSOLUTE_SHRINK_TOKENS = 1000
@@ -28,7 +33,7 @@ controller.append("assistant", "The raw smoke evidence is stale and should be co
 
 const raw_context = controller.renderVisibleContext()
 assertRawContext(raw_context)
-await writeFile(join(RUN_DIR, "visible-before-compaction.txt"), raw_context, "utf8")
+await writeFile(VISIBLE_BEFORE_PATH, raw_context, "utf8")
 
 const compact_prompt = [
   "Call the partial_compact tool exactly once with these arguments:",
@@ -44,10 +49,12 @@ const compact_prompt = [
 const raw_turn = await controller.runTurn(compact_prompt, 120000)
 if (!raw_turn.ok) throw new Error(`raw turn failed: ${raw_turn.error}`)
 if (raw_turn.n_tool_calls === 0) throw new Error("Codex did not call the controller compaction tool")
+assertRawContext(raw_turn.model_visible_context)
+await writeFile(RAW_TURN_CONTEXT_PATH, raw_turn.model_visible_context, "utf8")
 
 const compacted_context = controller.renderVisibleContext()
 assertCompactedContext(compacted_context)
-await writeFile(join(RUN_DIR, "visible-after-compaction.txt"), compacted_context, "utf8")
+await writeFile(VISIBLE_AFTER_PATH, compacted_context, "utf8")
 
 const follow_up = await controller.runTurn(
   `Using only prior context, reply with the durable phrase from the compacted summary and nothing else.`,
@@ -55,6 +62,7 @@ const follow_up = await controller.runTurn(
 )
 if (!follow_up.ok) throw new Error(`follow-up turn failed: ${follow_up.error}`)
 assertCompactedContext(follow_up.model_visible_context)
+await writeFile(FOLLOW_UP_CONTEXT_PATH, follow_up.model_visible_context, "utf8")
 if (!follow_up.assistant.toLowerCase().includes(SUMMARY_PHRASE)) {
   throw new Error(`compacted summary was not visible in the next turn: ${JSON.stringify(follow_up.assistant)}`)
 }
@@ -85,9 +93,14 @@ const result = {
   raw_context_chars: raw_context.length,
   compacted_context_chars: compacted_context.length,
   follow_up_injected_context_chars: follow_up.model_visible_context.length,
+  raw_model_visible_context_path: RAW_TURN_CONTEXT_PATH,
+  compacted_model_visible_context_path: FOLLOW_UP_CONTEXT_PATH,
+  visible_before_compaction_path: VISIBLE_BEFORE_PATH,
+  visible_after_compaction_path: VISIBLE_AFTER_PATH,
+  result_path: RESULT_PATH,
   follow_up_assistant: follow_up.assistant.trim(),
 }
-await writeFile(join(RUN_DIR, "result.json"), JSON.stringify(result, null, 2) + "\n", "utf8")
+await writeFile(RESULT_PATH, JSON.stringify(result, null, 2) + "\n", "utf8")
 console.log(JSON.stringify(result, null, 2))
 
 function assertRawContext(context: string): void {

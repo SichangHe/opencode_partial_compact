@@ -3,11 +3,12 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
-const RUN_DIR = join(ROOT, "runs", "controller-cli-smoke")
+const RUN_DIR = process.env.PCODX_CONTROLLER_CLI_SMOKE_RUN_DIR ?? join(ROOT, "runs", "controller-cli-smoke")
 const SESSION_ID = "pcodx-controller-cli-smoke"
 const SUMMARY_PHRASE = "CLI_COMPACTED_SUMMARY_SURVIVES"
 const RAW_A = "PCODX_CONTROLLER_CLI_RAW_A"
 const RAW_B = "PCODX_CONTROLLER_CLI_RAW_B"
+const RESULT_PATH = join(RUN_DIR, "result.json")
 
 await rm(RUN_DIR, { recursive: true, force: true })
 await mkdir(RUN_DIR, { recursive: true })
@@ -35,6 +36,7 @@ if (!baseline_context.includes(RAW_A) || !baseline_context.includes(RAW_B)) {
   throw new Error("baseline model-visible context did not contain raw sentinels")
 }
 const baseline_tokens = inputTokens(baseline)
+const baseline_context_path = requireString(baseline.model_visible_context_path)
 const compact = cliJson(
   "compact",
   "--range",
@@ -66,21 +68,28 @@ if (turn.ok !== true) throw new Error(`controller CLI turn failed: ${JSON.string
 const turn_context = await readFile(requireString(turn.model_visible_context_path), "utf8")
 assertCompactedContext(turn_context)
 const compacted_tokens = inputTokens(turn)
+const shrink_tokens = baseline_tokens - compacted_tokens
+const shrink_fraction = baseline_tokens <= 0 ? 0 : shrink_tokens / baseline_tokens
 if (compacted_tokens >= baseline_tokens / 2) {
   throw new Error(`controller CLI app-server input tokens did not shrink enough: baseline=${baseline_tokens} compacted=${compacted_tokens}`)
 }
 
-console.log(JSON.stringify({
+const result = {
   ok: true,
   before_visible_context_chars: before_chars,
   after_visible_context_chars: after_chars,
   turn_visible_context_chars: requireNumber(turn.visible_context_chars),
   baseline_input_tokens: baseline_tokens,
   compacted_input_tokens: compacted_tokens,
-  shrink_tokens: baseline_tokens - compacted_tokens,
-  model_visible_context_path: turn.model_visible_context_path,
+  shrink_tokens,
+  shrink_fraction,
+  baseline_model_visible_context_path: baseline_context_path,
+  compacted_model_visible_context_path: turn.model_visible_context_path,
   future_model_visible_context_path: turn.future_model_visible_context_path,
-}, null, 2))
+  result_path: RESULT_PATH,
+}
+await writeFile(RESULT_PATH, `${JSON.stringify(result, null, 2)}\n`, "utf8")
+console.log(JSON.stringify(result, null, 2))
 
 function cliJson(...args: string[]): Record<string, unknown> {
   const result = Bun.spawnSync({

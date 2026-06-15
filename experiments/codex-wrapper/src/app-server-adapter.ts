@@ -80,6 +80,7 @@ export type CodexLiveTurnSmoke = {
 export type CodexSingleTurnUsage = {
   ok: true
   assistant: string
+  thread_id: string
   n_items_injected: number
   turns_completed: number
   token_usage: CodexThreadTokenUsage
@@ -87,6 +88,7 @@ export type CodexSingleTurnUsage = {
   ok: false
   error: string
   assistant: string
+  thread_id: string | null
   turns_completed: number
   token_usage: CodexThreadTokenUsage | null
 }
@@ -437,6 +439,7 @@ export async function runCuratedSingleTurnUsage(
   let completeTurn: (turn: unknown) => void = () => {}
   let observeUsage: (usage: CodexThreadTokenUsage) => void = () => {}
   let turns_completed = 0
+  let thread_id: string | null = null
   let token_usage: CodexThreadTokenUsage | null = null
   const nextCompletedTurn = (): Promise<unknown> => new Promise(resolve => {
     completeTurn = resolve
@@ -472,6 +475,7 @@ export async function runCuratedSingleTurnUsage(
       baseInstructions: "You are a concise coding assistant.",
       developerInstructions: "Use injected curated context as prior conversation state.",
     }), timer))
+    thread_id = thread.thread_id
     const items = [{
       type: "message",
       role: "user",
@@ -489,14 +493,15 @@ export async function runCuratedSingleTurnUsage(
     token_usage = reminders.latest(thread.thread_id) ??
       await withTimeoutOrNull(first_usage_observed, AbortSignal.timeout(3000))
     if (first_turn.status !== "completed") {
-      return { ok: false, error: `turn status ${first_turn.status}`, assistant, turns_completed, token_usage }
+      return { ok: false, error: `turn status ${first_turn.status}`, assistant, thread_id, turns_completed, token_usage }
     }
     if (!token_usage) {
-      return { ok: false, error: "turn completed without app-server token usage notification", assistant, turns_completed, token_usage }
+      return { ok: false, error: "turn completed without app-server token usage notification", assistant, thread_id, turns_completed, token_usage }
     }
     return {
       ok: true,
       assistant,
+      thread_id,
       n_items_injected: items.length,
       turns_completed,
       token_usage,
@@ -506,6 +511,7 @@ export async function runCuratedSingleTurnUsage(
       ok: false,
       error: sanitizeError(String((err as Error).message ?? err)),
       assistant,
+      thread_id,
       turns_completed,
       token_usage,
     }

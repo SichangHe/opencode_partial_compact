@@ -5,3 +5,5 @@ dist/
 bun.lock
 experiments/codex-wrapper/runs/self-compact-smoke/
 experiments/codex-wrapper/runs/controller-cli-smoke/
+experiments/codex-wrapper/runs/context-shrink-smoke/
+experiments/codex-wrapper/runs/verify-self-compaction/

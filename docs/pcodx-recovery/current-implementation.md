@@ -93,6 +93,11 @@ Codex app-server controller path
   - controller injects the render as prior context
   - dynamic tools mutate the controller ledger during a turn
   - the next controller-started turn uses the compacted render
+- verification
+  - `bun run verify:self-compaction`
+  - runs typecheck, unit tests, context-shrink smoke, self-compacting controller smoke, and controller CLI smoke
+  - writes `runs/verify-self-compaction/<run-id>/report.json`
+  - records raw and compacted `last.inputTokens`, shrink fraction, context artifact paths, and context-file hashes
 - observable metric
   - `thread/tokenUsage/updated`
   - `token_usage.last.inputTokens`
@@ -112,4 +117,3 @@ reusable virtual context concepts
 - receipts
   - must state whether native context was rewritten
   - must expose visible ids and artifact paths
-

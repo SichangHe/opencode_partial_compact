@@ -64,6 +64,9 @@ observable success criterion
   - one compaction action
   - one follow-up app-server turn from compacted render
   - machine-readable report with raw tokens, compacted tokens, shrink tokens, shrink fraction, paths
+  - one command
+    - `bun run verify:self-compaction`
+    - run from `experiments/codex-wrapper`
 
 redesign phases
 
