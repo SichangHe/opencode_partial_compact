@@ -119,7 +119,7 @@ describe("WrapperLedger", () => {
 })
 
 describe("pcodx MCP sidecar", () => {
-  it("keeps tool receipts compact and compacts multiple ranges in one call", async () => {
+  it("keeps receipts compact and does not expose the broken compaction tool", async () => {
     const run_dir = await mkdtemp(join(tmpdir(), "pcodx-mcp-test-"))
     const ledger_path = join(run_dir, "ledger.json")
     const transport = new StdioClientTransport({
@@ -136,10 +136,20 @@ describe("pcodx MCP sidecar", () => {
     const raw_b = "PCODX_RAW_RECEIPT_SENTINEL_B"
     try {
       await client.connect(transport)
+      const tools = await client.listTools()
+      const tool_names = tools.tools.map(tool => tool.name)
+      expect(tool_names).toContain("partial_compact_record_message")
+      expect(tool_names).toContain("partial_compact_current_ids")
+      expect(tool_names).toContain("partial_compact_current_session_message_ids")
+      expect(tool_names).toContain("partial_compact_instructions")
+      expect(tool_names).not.toContain("partial_compact")
+      const removed = await client.callTool({ name: "partial_compact", arguments: {} })
+      expect(removed.isError).toBe(true)
+
       const empty_ids = toolJson(await client.callTool({ name: "partial_compact_current_session_message_ids", arguments: {} }))
       const empty_visible_context_path = requireString(empty_ids.visible_context_path)
       const empty_visible_context = await readFile(empty_visible_context_path, "utf8")
-      expect(empty_visible_context).toContain("<system>pcodx compacted visible context</system>")
+      expect(empty_visible_context).toContain("<system>pcodx recorded visible context</system>")
 
       const first_raw = await client.callTool({
         name: "partial_compact_record_message",
@@ -169,26 +179,12 @@ describe("pcodx MCP sidecar", () => {
       expect(ids_text).not.toContain(raw_a)
       expect(ids_text).not.toContain(raw_b)
 
-      const compact_text = toolText(await client.callTool({
-        name: "partial_compact",
-        arguments: {
-          ranges: [
-            { from_message_id: first_id, to_message_id: first_id, summary: "first raw sentinel summary" },
-            { from_message_id: second_id, to_message_id: second_id, summary: "second raw sentinel summary" },
-          ],
-        },
-      }))
-      expectReceiptHidesVisibleContext(compact_text)
-      expect(compact_text).not.toContain(raw_a)
-      expect(compact_text).not.toContain(raw_b)
-      const compact = JSON.parse(compact_text) as { n_ranges_compacted: number; visible_context_path: string }
-      expect(compact.n_ranges_compacted).toBe(2)
-      const visible_context = await readFile(compact.visible_context_path, "utf8")
-      expect(visible_context).toContain("first raw sentinel summary")
-      expect(visible_context).toContain("second raw sentinel summary")
+      const current_ids = toolJson(await client.callTool({ name: "partial_compact_current_ids", arguments: {} }))
+      expect(current_ids.visible_message_ids).toEqual([first_id, "msg000002", second_id])
+      const visible_context = await readFile(requireString(current_ids.visible_context_path), "utf8")
       expect(visible_context).toContain("durable keep")
-      expect(visible_context).not.toContain(raw_a)
-      expect(visible_context).not.toContain(raw_b)
+      expect(visible_context).toContain(raw_a)
+      expect(visible_context).toContain(raw_b)
     } finally {
       await client.close()
       await rm(run_dir, { recursive: true, force: true })

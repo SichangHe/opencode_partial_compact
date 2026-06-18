@@ -72,9 +72,8 @@ Codex MCP sidecar path
   - `partial_compact_record_message`
   - `partial_compact_current_ids`
   - `partial_compact_current_session_message_ids`
-  - `partial_compact`
 - actual effect
-  - appends and compacts `WrapperLedger`
+  - appends to `WrapperLedger`
   - writes rendered visible context artifact
   - returns receipts with `native_context_rewritten: false`
 

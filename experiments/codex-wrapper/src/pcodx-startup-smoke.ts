@@ -21,10 +21,10 @@ const developer_text = developer_prompt_text(prompt_items)
 const expected_tool_names = [
   "mcp__pcodx_partial_compact__partial_compact_record_message",
   "mcp__pcodx_partial_compact__partial_compact_current_ids",
-  "mcp__pcodx_partial_compact__partial_compact",
+  "mcp__pcodx_partial_compact__partial_compact_instructions",
 ]
 for (const expected of [
-  "You are running in pcodx, Partial-Compactable cODeX mode.",
+  "You are running in pcodx sidecar-recording worker mode.",
   `ledger_path: ${ledger_path}`,
   "Context-window reminder",
   ...expected_tool_names,
@@ -36,6 +36,9 @@ for (const expected_tool_name of expected_tool_names) {
 }
 if (developer_text.includes("partial_compact_current_session_message_ids")) {
   throw new Error("startup instructions still reference the long current-id tool name")
+}
+if (developer_text.includes("then call partial_compact")) {
+  throw new Error("startup instructions still tell workers to call partial_compact")
 }
 const expected_text = pcodx_startup_instructions(ledger_path)
 if (!developer_text.includes(expected_text)) throw new Error("developer prompt does not contain the shared startup instruction")

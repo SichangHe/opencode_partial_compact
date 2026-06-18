@@ -5,19 +5,13 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { WrapperLedger } from "./ledger.js"
 import { pcodx_startup_instructions } from "./pcodx-instructions.js"
-import type { CompactionRecord, LedgerMessage, PartialCompactRange, PartialCompactRangesResult } from "./types.js"
+import type { CompactionRecord, LedgerMessage } from "./types.js"
 
 const session_id = process.env.PCODX_SESSION_ID ?? `pcodx-${process.pid}`
 const run_dir = process.env.PCODX_RUN_DIR ?? `/tmp/pcodx-runs/${session_id}`
 const ledger_path = process.env.PCODX_LEDGER_PATH ?? `${run_dir}/ledger.json`
 const visible_context_path = `${dirname(ledger_path)}/rendered-visible-context.txt`
 const ledger = loadLedger(ledger_path, session_id)
-const compact_range_schema = z.object({
-  from_message_id: z.string().min(1),
-  to_message_id: z.string().min(1),
-  summary: z.string().min(1),
-})
-
 const server = new McpServer({
   name: "pcodx-partial-compact",
   version: "0.1.0",
@@ -26,8 +20,8 @@ const server = new McpServer({
 server.registerTool(
   "partial_compact_instructions",
   {
-    title: "Partial-compaction instructions",
-    description: "Explain how to use the pcodx partial-compaction ledger tools in this worker.",
+    title: "Pcodx sidecar recording instructions",
+    description: "Explain how to use the pcodx sidecar recording helpers in this worker.",
   },
   () => ({
     content: [
@@ -43,7 +37,7 @@ server.registerTool(
   "partial_compact_record_message",
   {
     title: "Record compactable context",
-    description: "Append a message to the pcodx sidecar ledger so it can later be partially compacted.",
+    description: "Append a message to the pcodx sidecar ledger for durable working-memory handoff.",
     inputSchema: {
       role: z.enum(["system", "user", "assistant", "tool"]),
       text: z.string().min(1),
@@ -111,39 +105,6 @@ function current_session_message_ids() {
   }
 }
 
-server.registerTool(
-  "partial_compact",
-  {
-    title: "Partially compact pcodx ledger",
-    description: "Replace one or more disjoint ranges of recorded pcodx ledger messages with faithful summaries.",
-    inputSchema: {
-      ranges: z.array(compact_range_schema).min(1).optional(),
-      from_message_id: z.string().min(1).optional(),
-      to_message_id: z.string().min(1).optional(),
-      summary: z.string().min(1).optional(),
-    },
-  },
-  (args) => {
-    const ranges = normalizeCompactionRanges(args)
-    const result = Array.isArray(ranges)
-      ? ledger.partialCompactRanges(ranges)
-      : ranges
-    if (result.ok) saveLedgerArtifacts(ledger_path, ledger)
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(
-            compactionReceipt(result),
-            null,
-            2,
-          ),
-        },
-      ],
-    }
-  },
-)
-
 await server.connect(new StdioServerTransport())
 
 type LedgerSnapshot = {
@@ -186,53 +147,5 @@ function saveLedgerArtifacts(path: string, ledger_to_save: WrapperLedger): void 
 
 function writeVisibleContextArtifact(ledger_to_save: WrapperLedger): void {
   mkdirSync(dirname(visible_context_path), { recursive: true })
-  writeFileSync(visible_context_path, ledger_to_save.renderVisibleContext("pcodx compacted visible context") + "\n", "utf-8")
-}
-
-function normalizeCompactionRanges(args: {
-  ranges?: PartialCompactRange[] | undefined
-  from_message_id?: string | undefined
-  to_message_id?: string | undefined
-  summary?: string | undefined
-}): PartialCompactRange[] | PartialCompactRangesResult {
-  if (args.ranges !== undefined) return args.ranges
-  if (
-    typeof args.from_message_id === "string" &&
-    typeof args.to_message_id === "string" &&
-    typeof args.summary === "string"
-  ) {
-    return [{
-      from_message_id: args.from_message_id,
-      to_message_id: args.to_message_id,
-      summary: args.summary,
-    }]
-  }
-  return { ok: false, error: "provide ranges with from_message_id, to_message_id, and summary" }
-}
-
-function compactionReceipt(result: PartialCompactRangesResult): Record<string, unknown> {
-  if (!result.ok) {
-    return {
-      ok: false,
-      error: result.error,
-      ledger_path,
-      visible_context_path,
-      native_context_rewritten: false,
-    }
-  }
-  return {
-    ok: true,
-    n_ranges_compacted: result.n_ranges_compacted,
-    n_messages_replaced: result.n_messages_replaced,
-    compactions: result.records.map(record => ({
-      id: record.id,
-      from_message_id: record.from_message_id,
-      to_message_id: record.to_message_id,
-      n_messages_replaced: record.n_messages_replaced,
-    })),
-    visible_message_ids: result.visible_message_ids,
-    ledger_path,
-    visible_context_path,
-    native_context_rewritten: false,
-  }
+  writeFileSync(visible_context_path, ledger_to_save.renderVisibleContext("pcodx recorded visible context") + "\n", "utf-8")
 }
