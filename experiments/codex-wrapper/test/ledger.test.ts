@@ -10,7 +10,7 @@ import {
   ContextWindowReminderTracker,
   renderContextWindowReminder,
 } from "../src/app-server-adapter.js"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -311,11 +311,257 @@ describe("manager agent launcher", () => {
       expect(requireString(first.launch_command)).toContain("Manager launch context:")
       expect(requireString(first.continue_command)).toContain(requireString(first.run_dir))
       expect(requireString(first.continue_command)).toContain(requireString(first.session_id))
+      expect(requireString(first.continue_command)).toContain("src/agent-cli.ts")
       expect(requireString(first.run_dir)).not.toBe(requireString(second.run_dir))
       expect(requireString(first.session_id)).not.toBe(requireString(second.session_id))
     } finally {
       await rm(run_dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe("agent wrapper", () => {
+  it("routes start dry-runs through the controller manager launcher", async () => {
+    const run_dir = await mkdtemp(join(tmpdir(), "pcodx-agent-start-test-"))
+    const task_file = join(run_dir, "task.md")
+    const worker_defaults = join(run_dir, "worker-defaults.md")
+    await writeFile(task_file, "Validation task.", "utf8")
+    await writeFile(worker_defaults, "Worker defaults.", "utf8")
+    try {
+      const result = agentJson(
+        "start",
+        "--dry-run",
+        "--root",
+        run_dir,
+        "--task-file",
+        task_file,
+        "--tmux-session",
+        "opc",
+        "--workdir",
+        run_dir,
+        "--worker-defaults",
+        worker_defaults,
+        "--run-root",
+        join(run_dir, "runs"),
+      )
+      expect(result.ok).toBe(true)
+      expect(result.acceptance_scope_text).toBe("acceptance_scope=controller-owned app-server turns")
+      expect(requireString(result.launch_command)).toContain("src/controller-cli.ts")
+      expect(requireString(result.launch_command)).toContain("interactive")
+      expect(requireString(result.continue_command)).toContain(requireString(result.run_dir))
+      expect(requireString(result.continue_command)).toContain(requireString(result.session_id))
+    } finally {
+      await rm(run_dir, { recursive: true, force: true })
+    }
+  })
+
+  it("builds continue commands that preserve run dir and session id", async () => {
+    const result = agentJson(
+      "continue",
+      "--run-dir",
+      "/tmp/pcodx-agent-preserve-run",
+      "--session-id",
+      "session-123",
+      "--cwd",
+      "/tmp",
+      "--dry-run",
+    )
+    expect(result.ok).toBe(true)
+      expect(result.acceptance_scope).toBe("controller-owned app-server turns")
+      expect(requireString(result.continue_command)).toContain("--run-dir /tmp/pcodx-agent-preserve-run")
+      expect(requireString(result.continue_command)).toContain("--session-id session-123")
+      expect(requireString(result.continue_command)).toContain("src/agent-cli.ts")
+      expect(requireString(result.controller_command)).toContain("src/controller-cli.ts")
+      expect(requireString(result.controller_command)).toContain("interactive")
+  })
+
+  it("keeps interactive attached and scoped", async () => {
+    const run_dir = await mkdtemp(join(tmpdir(), "pcodx-agent-interactive-test-"))
+    try {
+      const output = agentText(
+        [
+          "--run-dir",
+          run_dir,
+          "--session-id",
+          "agent-interactive-test",
+          "interactive",
+        ],
+        "/exit\n",
+      )
+      expect(output).toContain("acceptance_scope=controller-owned app-server turns")
+      expect(output).toContain("pcodx interactive Codex CLI")
+      expect(output).toContain("bye")
+    } finally {
+      await rm(run_dir, { recursive: true, force: true })
+    }
+  })
+
+  it("exposes a Codex front-end proxy route separate from the controller REPL", () => {
+    const result = agentJson(
+      "frontend",
+      "--dry-run",
+      "--run-dir",
+      "/tmp/pcodx-frontend-dry-run",
+      "--session-id",
+      "frontend-session",
+      "--cwd",
+      "/tmp",
+      "--",
+      "--no-alt-screen",
+    )
+    expect(result.ok).toBe(true)
+    expect(result.acceptance_scope).toBe("codex front-end remote app-server proxy")
+    expect(requireString(result.codex_frontend_command)).toContain("codex --remote")
+    expect(requireString(result.codex_frontend_command)).toContain("--no-alt-screen")
+    expect(requireString(result.slash_command_surface)).toContain("/review")
+    expect(requireString(result.context_shrink_route)).toContain("fresh app-server thread")
+  })
+
+  it("summarizes evidence and artifacts from a controller run directory", async () => {
+    const run_dir = await mkdtemp(join(tmpdir(), "pcodx-agent-evidence-test-"))
+    const turns_dir = join(run_dir, "turns")
+    const report_path = join(turns_dir, "thread-1-report.json")
+    try {
+      await writeFile(join(run_dir, "ledger.json"), "{}", "utf8")
+      await writeFile(join(run_dir, "model-visible-context.txt"), "future context", "utf8")
+      await writeFile(join(run_dir, "last-turn-model-visible-context.txt"), "last context", "utf8")
+      await mkdir(turns_dir, { recursive: true })
+      await writeFile(join(turns_dir, "thread-1-model-visible-context.txt"), "turn context", "utf8")
+      await writeFile(report_path, JSON.stringify({
+        baseline_input_tokens: 1000,
+        compacted_input_tokens: 250,
+        shrink_tokens: 750,
+        shrink_fraction: 0.75,
+        baseline_model_visible_context_path: join(turns_dir, "baseline.txt"),
+        compacted_model_visible_context_path: join(turns_dir, "thread-1-model-visible-context.txt"),
+      }), "utf8")
+      await writeFile(join(run_dir, "last-turn.json"), JSON.stringify({
+        model_visible_context_path: join(turns_dir, "thread-1-model-visible-context.txt"),
+        future_model_visible_context_path: join(run_dir, "model-visible-context.txt"),
+        shrink_tokens: 9999,
+      }), "utf8")
+
+      const evidence = agentJson("evidence", "--run-dir", run_dir)
+      expect(evidence.ok).toBe(true)
+      const evidence_body = requireRecord(evidence.evidence)
+      expect(evidence_body.source_json_path).toBe(report_path)
+      expect(evidence_body.baseline_input_tokens).toBe(1000)
+      expect(evidence_body.compacted_input_tokens).toBe(250)
+      expect(evidence_body.shrink_tokens).toBe(750)
+
+      const artifacts = agentJson("artifacts", "--run-dir", run_dir)
+      expect(artifacts.ok).toBe(true)
+      expect(requireString(artifacts.ledger_path)).toBe(join(run_dir, "ledger.json"))
+      expect(requireStringArray(artifacts.per_turn_reports)).toContain(report_path)
+      expect(requireStringArray(artifacts.context_files)).toContain(join(turns_dir, "thread-1-model-visible-context.txt"))
+      expect(requireStringArray(artifacts.last_turn_files)).toContain(join(run_dir, "last-turn.json"))
+    } finally {
+      await rm(run_dir, { recursive: true, force: true })
+    }
+  })
+
+  it("rejects evidence without a positive app-server token pair", async () => {
+    const run_dir = await mkdtemp(join(tmpdir(), "pcodx-agent-no-evidence-test-"))
+    const turns_dir = join(run_dir, "turns")
+    try {
+      await mkdir(turns_dir, { recursive: true })
+      await writeFile(join(run_dir, "artifact-only.json"), JSON.stringify({ shrink_tokens: 100, shrink_fraction: 0.5, result_path: "artifact.txt" }), "utf8")
+      await writeFile(join(turns_dir, "thread-a-report.json"), JSON.stringify(turnReportFixture(300, join(turns_dir, "thread-a-model-visible-context.txt"))), "utf8")
+      await writeFile(join(turns_dir, "thread-b-report.json"), JSON.stringify(turnReportFixture(1200, join(turns_dir, "thread-b-model-visible-context.txt"))), "utf8")
+
+      const result = agentRaw("evidence", "--run-dir", run_dir)
+      expect(result.status).not.toBe(0)
+      const output = requireRecord(JSON.parse(result.stdout))
+      expect(output.ok).toBe(false)
+      expect(output.evidence).toBeNull()
+      expect(output.acceptance_scope_text).toBe("acceptance_scope=controller-owned app-server turns")
+    } finally {
+      await rm(run_dir, { recursive: true, force: true })
+    }
+  })
+
+  it("derives explicit evidence shrink from token pairs", async () => {
+    const run_dir = await mkdtemp(join(tmpdir(), "pcodx-agent-explicit-evidence-test-"))
+    try {
+      await writeFile(join(run_dir, "inconsistent-positive.json"), JSON.stringify({
+        baseline_input_tokens: 100,
+        compacted_input_tokens: 50,
+        shrink_tokens: 9999,
+        shrink_fraction: 9999,
+      }), "utf8")
+      const evidence = agentJson("evidence", "--run-dir", run_dir)
+      const evidence_body = requireRecord(evidence.evidence)
+      expect(evidence_body.baseline_input_tokens).toBe(100)
+      expect(evidence_body.compacted_input_tokens).toBe(50)
+      expect(evidence_body.shrink_tokens).toBe(50)
+      expect(evidence_body.shrink_fraction).toBe(0.5)
+    } finally {
+      await rm(run_dir, { recursive: true, force: true })
+    }
+  })
+
+  it("rejects explicit evidence when token pair does not shrink", async () => {
+    const run_dir = await mkdtemp(join(tmpdir(), "pcodx-agent-negative-explicit-evidence-test-"))
+    try {
+      await writeFile(join(run_dir, "inconsistent-negative.json"), JSON.stringify({
+        baseline_input_tokens: 100,
+        compacted_input_tokens: 200,
+        shrink_tokens: 1,
+      }), "utf8")
+      const result = agentRaw("evidence", "--run-dir", run_dir)
+      expect(result.status).not.toBe(0)
+      const output = requireRecord(JSON.parse(result.stdout))
+      expect(output.ok).toBe(false)
+      expect(output.evidence).toBeNull()
+    } finally {
+      await rm(run_dir, { recursive: true, force: true })
+    }
+  })
+
+  it("derives evidence from ordinary per-turn reports", async () => {
+    const run_dir = await mkdtemp(join(tmpdir(), "pcodx-agent-turn-evidence-test-"))
+    const turns_dir = join(run_dir, "turns")
+    const baseline_report_path = join(turns_dir, "thread-a-report.json")
+    const compacted_report_path = join(turns_dir, "thread-b-report.json")
+    try {
+      await mkdir(turns_dir, { recursive: true })
+      await writeFile(join(turns_dir, "thread-a-model-visible-context.txt"), "raw context", "utf8")
+      await writeFile(join(turns_dir, "thread-b-model-visible-context.txt"), "compacted context", "utf8")
+      await writeFile(baseline_report_path, JSON.stringify(turnReportFixture(1200, join(turns_dir, "thread-a-model-visible-context.txt"))), "utf8")
+      await writeFile(compacted_report_path, JSON.stringify(turnReportFixture(300, join(turns_dir, "thread-b-model-visible-context.txt"))), "utf8")
+      await writeFile(join(run_dir, "last-turn.json"), JSON.stringify({ model_visible_context_path: join(turns_dir, "thread-b-model-visible-context.txt") }), "utf8")
+
+      const evidence = agentJson("evidence", "--run-dir", run_dir)
+      expect(evidence.ok).toBe(true)
+      const evidence_body = requireRecord(evidence.evidence)
+      expect(evidence_body.label).toBe("turn-report-pair")
+      expect(evidence_body.baseline_input_tokens).toBe(1200)
+      expect(evidence_body.compacted_input_tokens).toBe(300)
+      expect(evidence_body.shrink_tokens).toBe(900)
+      const artifact_paths = requireRecord(evidence_body.artifact_paths)
+      expect(artifact_paths.baseline_turn_report_path).toBe(baseline_report_path)
+      expect(artifact_paths.compacted_turn_report_path).toBe(compacted_report_path)
+    } finally {
+      await rm(run_dir, { recursive: true, force: true })
+    }
+  })
+
+  it("keeps scope on routed command failures", async () => {
+    const run_dir = await mkdtemp(join(tmpdir(), "pcodx-agent-failure-test-"))
+    try {
+      const result = agentRaw("compact", "--run-dir", run_dir, "--session-id", "agent-failure-test", "--range", "msg999999..msg999999", "--summary", "missing")
+      expect(result.status).not.toBe(0)
+      expect(result.stdout).toContain("acceptance_scope=controller-owned app-server turns")
+    } finally {
+      await rm(run_dir, { recursive: true, force: true })
+    }
+  })
+
+  it("keeps scope on wrapper validation failures", () => {
+    const result = agentRaw("continue", "--session-id", "missing-run-dir")
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain("agent continue requires --run-dir")
+    expect(result.stderr).toContain("acceptance_scope=controller-owned app-server turns")
   })
 })
 
@@ -434,6 +680,16 @@ function requireNumber(value: unknown): number {
   return value
 }
 
+function requireRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("expected record")
+  return value as Record<string, unknown>
+}
+
+function requireStringArray(value: unknown): string[] {
+  if (!Array.isArray(value) || !value.every(item => typeof item === "string")) throw new Error("expected string array")
+  return value
+}
+
 function cliJson(run_dir: string, ...args: string[]): Record<string, unknown> {
   const result = Bun.spawnSync({
     cmd: ["bun", "run", join(ROOT, "src", "controller-cli.ts"), "--run-dir", run_dir, "--session-id", "cli-test", ...args],
@@ -466,6 +722,59 @@ function cliText(run_dir: string, input: string): string {
   })
   if (result.status !== 0) throw new Error(`interactive controller CLI failed: ${result.stderr}`)
   return result.stdout
+}
+
+function agentJson(...args: string[]): Record<string, unknown> {
+  const result = agentRaw(...args)
+  if (result.status !== 0) throw new Error(`agent wrapper failed: ${result.stderr}`)
+  return requireRecord(JSON.parse(result.stdout))
+}
+
+function agentText(args: string[], input: string): string {
+  const result = spawnSync("bun", ["run", join(ROOT, "src", "agent-cli.ts"), ...args], {
+    encoding: "utf8",
+    input,
+    timeout: 30000,
+  })
+  if (result.status !== 0) throw new Error(`agent wrapper failed: ${result.stderr}`)
+  return result.stdout
+}
+
+function agentRaw(...args: string[]): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync("bun", ["run", join(ROOT, "src", "agent-cli.ts"), ...args], {
+    encoding: "utf8",
+    timeout: 30000,
+  })
+  return {
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  }
+}
+
+function turnReportFixture(input_tokens: number, model_visible_context_path: string): Record<string, unknown> {
+  return {
+    ok: true,
+    assistant: "ok",
+    thread_id: "thread",
+    visible_context_chars: 10,
+    model_visible_context_path,
+    turn_report_path: `${model_visible_context_path}.json`,
+    future_model_visible_context_path: model_visible_context_path,
+    n_items_injected: 1,
+    n_tool_calls: 0,
+    token_usage: {
+      last: {
+        inputTokens: input_tokens,
+        totalTokens: input_tokens + 1,
+        cachedInputTokens: 0,
+        outputTokens: 1,
+        reasoningOutputTokens: 0,
+      },
+    },
+    future_state_persisted: true,
+    last_turn_context_path: model_visible_context_path,
+  }
 }
 
 function managerDryRun(root: string, task_file: string, worker_defaults: string, run_root: string): Record<string, unknown> {

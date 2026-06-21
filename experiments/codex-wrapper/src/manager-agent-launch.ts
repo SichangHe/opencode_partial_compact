@@ -239,14 +239,14 @@ function continueCommand(args: {
   return [
     "bun",
     "run",
-    join(POC_ROOT, "src", "controller-cli.ts"),
+    join(POC_ROOT, "src", "agent-cli.ts"),
+    "continue",
     "--run-dir",
     args.run_dir,
     "--session-id",
     args.session_id,
     "--cwd",
     args.workdir,
-    "interactive",
     "--timeout-ms",
     args.timeout_ms,
   ]

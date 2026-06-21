@@ -67,6 +67,7 @@ type ControllerTurnReport = {
   thread_id: string | null
   visible_context_chars: number
   model_visible_context_path: string
+  turn_report_path: string
   future_model_visible_context_path: string
   n_items_injected: number
   n_tool_calls: number
@@ -180,7 +181,9 @@ async function commandInteractive(state: ControllerState, parsed: ParsedArgs): P
 async function runControllerTurn(state: ControllerState, prompt: string, timeout_ms: number): Promise<ControllerTurnReport> {
   const controller = cloneController(state.controller)
   const result = await controller.runTurn(prompt, timeout_ms)
-  const turn_context_path = join(state.run_dir, "turns", `${turnArtifactName(result.thread_id)}-model-visible-context.txt`)
+  const turn_base_path = join(state.run_dir, "turns", turnArtifactName(result.thread_id))
+  const turn_context_path = `${turn_base_path}-model-visible-context.txt`
+  const turn_report_path = `${turn_base_path}-report.json`
   await mkdir(state.run_dir, { recursive: true })
   await mkdir(join(state.run_dir, "turns"), { recursive: true })
   await writeFile(turn_context_path, `${result.model_visible_context}\n`, "utf8")
@@ -196,6 +199,7 @@ async function runControllerTurn(state: ControllerState, prompt: string, timeout
     thread_id: result.thread_id,
     visible_context_chars: result.visible_context_chars,
     model_visible_context_path: turn_context_path,
+    turn_report_path,
     future_model_visible_context_path: state.visible_context_path,
     n_items_injected: result.n_items_injected,
     n_tool_calls: result.n_tool_calls,
@@ -203,6 +207,7 @@ async function runControllerTurn(state: ControllerState, prompt: string, timeout
     future_state_persisted: result.ok,
     last_turn_context_path: state.last_turn_context_path,
   }
+  await writeFile(turn_report_path, `${JSON.stringify(report, null, 2)}\n`, "utf8")
   await writeFile(state.last_turn_path, `${JSON.stringify(report, null, 2)}\n`, "utf8")
   return report
 }

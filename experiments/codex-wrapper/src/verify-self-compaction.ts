@@ -33,6 +33,13 @@ const CHECKS: Check[] = [
   { name: "typecheck", cmd: ["bun", "run", "typecheck"], timeout_ms: 120000, parse_json: false },
   { name: "unit-tests", cmd: ["bun", "test"], timeout_ms: 120000, parse_json: false },
   {
+    name: "frontend-proxy-smoke",
+    cmd: ["bun", "run", "smoke:frontend-proxy"],
+    timeout_ms: 120000,
+    parse_json: true,
+    env: { PCODX_FRONTEND_PROXY_SMOKE_RUN_DIR: join(RUN_DIR, "frontend-proxy-smoke") },
+  },
+  {
     name: "context-shrink-smoke",
     cmd: ["bun", "run", "smoke:context-shrink"],
     timeout_ms: 180000,
@@ -117,7 +124,7 @@ async function writeReports(results: CheckResult[], ok: boolean): Promise<void> 
     report_md_path: REPORT_MD_PATH,
     checks: results,
     smoke_results,
-    acceptance_scope: "controller-owned Codex app-server turns only",
+    acceptance_scope: "Codex front-end proxy and controller-owned app-server turns",
     mcp_sidecar_acceptance: false,
   }
   await writeFile(REPORT_JSON_PATH, `${JSON.stringify(report, null, 2)}\n`, "utf8")
@@ -126,8 +133,8 @@ async function writeReports(results: CheckResult[], ok: boolean): Promise<void> 
 }
 
 async function addContextHashes(json: Record<string, unknown>): Promise<void> {
-  const raw_path = stringValue(json.raw_model_visible_context_path ?? json.baseline_model_visible_context_path)
-  const compacted_path = stringValue(json.compacted_model_visible_context_path)
+  const raw_path = stringValue(json.raw_model_visible_context_path ?? json.baseline_model_visible_context_path ?? json.first_injected_context_path)
+  const compacted_path = stringValue(json.compacted_model_visible_context_path ?? json.second_injected_context_path)
   if (raw_path !== null) json.raw_model_visible_context_sha256 = await sha256File(raw_path)
   if (compacted_path !== null) json.compacted_model_visible_context_sha256 = await sha256File(compacted_path)
 }
@@ -190,17 +197,26 @@ function renderMarkdown(report: {
 }
 
 function renderSmoke(name: string, json: Record<string, unknown>): string[] {
-  const raw = json.raw_input_tokens ?? json.baseline_input_tokens
-  const compacted = json.compacted_input_tokens
+  const raw_tokens = json.raw_input_tokens ?? json.baseline_input_tokens
+  const compacted_tokens = json.compacted_input_tokens
+  const shrink_tokens = json.shrink_tokens
+  const raw_chars = json.first_injected_context_chars
+  const compacted_chars = json.second_injected_context_chars
+  const shrink_chars = json.shrink_chars
+  const raw_path = json.raw_model_visible_context_path ?? json.baseline_model_visible_context_path ?? json.first_injected_context_path
+  const compacted_path = json.compacted_model_visible_context_path ?? json.second_injected_context_path
   return [
     `- ${name}`,
-    `  - raw_input_tokens: ${String(raw)}`,
-    `  - compacted_input_tokens: ${String(compacted)}`,
-    `  - shrink_tokens: ${String(json.shrink_tokens)}`,
+    `  - raw_input_tokens: ${String(raw_tokens)}`,
+    `  - compacted_input_tokens: ${String(compacted_tokens)}`,
+    `  - shrink_tokens: ${String(shrink_tokens)}`,
+    `  - raw_context_chars: ${String(raw_chars)}`,
+    `  - compacted_context_chars: ${String(compacted_chars)}`,
+    `  - shrink_chars: ${String(shrink_chars)}`,
     `  - shrink_fraction: ${String(json.shrink_fraction)}`,
-    `  - raw_context_path: ${String(json.raw_model_visible_context_path ?? json.baseline_model_visible_context_path)}`,
+    `  - raw_context_path: ${String(raw_path)}`,
     `  - raw_context_sha256: ${String(json.raw_model_visible_context_sha256)}`,
-    `  - compacted_context_path: ${String(json.compacted_model_visible_context_path)}`,
+    `  - compacted_context_path: ${String(compacted_path)}`,
     `  - compacted_context_sha256: ${String(json.compacted_model_visible_context_sha256)}`,
     `  - result_path: ${String(json.result_path)}`,
   ]

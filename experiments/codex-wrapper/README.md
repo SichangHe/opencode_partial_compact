@@ -55,13 +55,47 @@
   - writes raw-turn and follow-up model-visible context files plus `runs/self-compact-smoke/result.json`
 - operator verification
   - `bun run verify:self-compaction`
-  - runs typecheck, unit/CLI tests, the app-server context-shrink smoke, the dynamic self-compaction smoke, and the controller CLI smoke
-  - use this as the safe acceptance check for controller-owned app-server next-turn shrink
+  - runs typecheck, unit/CLI tests, the Codex front-end proxy smoke, the app-server context-shrink smoke, the dynamic self-compaction smoke, and the controller CLI smoke
+  - use this as the safe acceptance check for front-end proxy and controller-owned app-server next-turn shrink
   - writes `runs/verify-self-compaction/<run-id>/report.json` and `runs/verify-self-compaction/<run-id>/report.md`
   - the report records raw input tokens, compacted input tokens, shrink tokens, shrink fraction, artifact paths, and context-file hashes
   - passing means future app-server controller turns are seeded from the compacted ledger render
   - passing does not mean a stock CLI/MCP worker rewrote its already-running hidden transcript
-  - generated verifier artifacts are evidence for the controller path only and are isolated per verifier run
+  - generated verifier artifacts are evidence for the front-end proxy and controller paths and are isolated per verifier run
+- controller agent wrapper
+  - stable wrapper command: `bun run agent -- <command>`
+  - `bun run agent -- start --task-file TASK.md --root /path/to/work-logs --tmux-session opc --workdir /repo/or/task/workdir`
+  - `agent start` routes to `manager-agent-launch.ts`, opens a tmux window, starts the controller `interactive` command, and sends manager worker defaults plus the task file as the first controller turn
+  - `bun run agent -- continue --run-dir runs/my-session --session-id my-session`
+  - `agent continue` routes back to the same controller run dir and session id
+  - `bun run agent -- ids|show|compact|turn|interactive` routes to `controller-cli.ts`
+  - `bun run agent -- evidence --run-dir runs/my-session` summarizes the latest run-dir shrink evidence when available: raw/baseline tokens, compacted/follow-up tokens, shrink tokens, shrink fraction, and artifact paths
+  - `bun run agent -- artifacts --run-dir runs/my-session` lists the ledger, visible context, last-turn files, per-turn reports, and context files
+  - `bun run agent -- verify` routes to `verify-self-compaction.ts`
+  - wrapper receipts include `acceptance_scope=controller-owned app-server turns`
+  - this wrapper does not implement stock Codex CLI transcript rewriting
+- Codex front-end proxy
+  - `bun run agent -- frontend -- --no-alt-screen`
+  - launches real Codex front-end with `codex --remote`
+  - starts a real upstream `codex app-server`
+  - places a PCODX websocket proxy between them
+  - native Codex owns slash-command parsing, TUI rendering, approval UX, status, and history UI
+  - `/review` remains native front-end behavior and reaches app-server `review/start`
+  - native `/compact` remains native front-end behavior and reaches app-server `thread/compact/start`
+  - PCODX partial compaction is exposed as dynamic app-server tools, not a redefined slash command
+  - ordinary completed Codex items such as command executions, file changes, MCP calls, and web search are recorded into the ledger on non-compacting turns
+  - after `partial_compact` succeeds, the proxy starts the next upstream turn on a fresh app-server thread
+  - the fresh upstream thread is seeded with only the compacted `WrapperLedger` render
+  - `thread/resume` and `thread/fork` are registered and can continue through the proxy
+  - detached `review/start` review threads are registered and can continue through the proxy
+  - review starts refresh and inject compacted context when a prior PCODX compaction invalidated the mapped thread
+  - successful PCODX compaction invalidates every mapped thread's injected context because the ledger is global
+  - wrapper receipts use `acceptance_scope=codex front-end remote app-server proxy`
+  - `bun run smoke:frontend-proxy`
+  - fake upstream smoke verifies native method forwarding, dynamic tool advertisement, detached review/resume/fork mapping, native completed-item retention, all-thread invalidation, and future-context shrink without model calls
+  - this path preserves Codex front-end CLI/TUI behavior better than the custom `pcodx>` controller REPL
+  - it still does not mutate a stock Codex CLI thread's hidden transcript in place
+  - exact remaining blocker: Codex app-server `thread/resume` and `thread/fork` params have no `dynamicTools` field, so PCODX dynamic compaction tools can be injected on proxy-started fresh threads but not retroactively added to already-resumed native threads without a Codex API extension
 - controller CLI
   - `bun run controller -- --run-dir runs/my-session --session-id my-session interactive`
   - starts a human-facing REPL backed by the self-compacting app-server controller
@@ -80,7 +114,7 @@
   - `bun run controller -- --run-dir runs/my-session turn --prompt "continue from the compacted context"`
   - the `compact` command writes `runs/my-session/model-visible-context.txt`
   - the next `turn` command injects that compacted ledger render into a fresh Codex app-server thread
-  - each `turn` writes a unique `runs/my-session/turns/<thread-id>-model-visible-context.txt` artifact and updates `last-turn-model-visible-context.txt`
+  - each `turn` writes unique `runs/my-session/turns/<thread-id>-model-visible-context.txt` and `runs/my-session/turns/<thread-id>-report.json` artifacts and updates `last-turn-model-visible-context.txt` and `last-turn.json`
   - CLI evidence includes `before_visible_context_chars`, `after_visible_context_chars`, `baseline_input_tokens`, `compacted_input_tokens`, `shrink_fraction`, and baseline/follow-up context paths
   - `bun run smoke:controller-cli` runs this workflow against real `codex app-server`
   - use this wrapper workflow when the requirement is to change future model-visible context
@@ -110,13 +144,14 @@
   - current app-server-managed usage is visible to a PCODX app-server wrapper through `thread/tokenUsage/updated`
   - current app-server schema can append model-visible items with `thread/inject_items` and instantiate a non-running thread from caller-provided history with `thread/resume`
   - current app-server schema cannot delete an arbitrary middle range from a running thread; `thread/rollback` only drops whole turns from the end
-  - minimal working self-compaction uses a controller-owned ledger plus fresh app-server threads, because fresh threads can be seeded with only the compacted render
+  - minimal working self-compaction uses a PCODX-owned ledger plus fresh app-server threads, because fresh threads can be seeded with only the compacted render
+  - the controller path owns both UI and turns; the front-end proxy path lets native Codex own UI while PCODX owns upstream turn replacement
   - current stock CLI/MCP workers do not expose their live thread id, transcript mutation API, or app-server connection to the MCP server
   - remaining boundary for resumed workers: manager/controller resume must start future work from `renderVisibleContext`; MCP-side ledger compaction alone is only durable state preservation
   - app-server reminder injection is based on completed-turn usage and a roughly 16k-token cadence, so it is a next-turn reminder rather than a live mid-turn hidden-context gauge
   - `codex debug prompt-input` renders the model-visible prompt item list, but does not report token usage
   - the PCODX MCP server cannot read live hidden native usage because Codex does not pass the real session id, session JSONL path, token counter, or pending hidden transcript state into MCP server calls
-  - smallest plausible live-compaction integration point for normal CLI/MCP workers is a Codex-native API that replaces model-visible history for the current running thread, or a PCODX app-server controller that owns every turn and resumes/injects only the compacted ledger render
+  - smallest plausible in-place live-compaction integration point for normal CLI/MCP workers remains a Codex-native API that replaces model-visible history for the current running thread
 - evidence
   - `visible-before-compaction.txt` contains stale raw context
   - `visible-after-compaction.txt` contains the summary and omits stale raw context
