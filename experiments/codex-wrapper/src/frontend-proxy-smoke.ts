@@ -96,6 +96,15 @@ try {
     threadId: client_thread_id,
     input: [{ type: "text", text: "Trigger PCODX partial compaction.", text_elements: [] }],
   })
+  const inline_review_after_compaction_result = await client.request("review/start", {
+    threadId: client_thread_id,
+    target: { type: "uncommitted_changes" },
+  })
+  const inline_review_after_compaction_thread_id = parseReviewThreadId(inline_review_after_compaction_result) ?? ""
+  await client.request("turn/start", {
+    threadId: client_thread_id,
+    input: [{ type: "text", text: "Parent turn immediately after inline review.", text_elements: [] }],
+  })
   const detached_review_result = await client.request("review/start", {
     threadId: client_thread_id,
     target: { type: "uncommitted_changes" },
@@ -152,6 +161,11 @@ try {
   const resume_supported = upstream.resume_params.length === 1 && resumed_thread_id === "upstream-resume-1"
   const fork_supported = upstream.fork_params.length === 1 && forked_thread_id === "upstream-fork-1"
   const detached_review_supported = detached_review_thread_id === "upstream-review-1"
+  const inline_review_after_compaction_supported = inline_review_after_compaction_thread_id === client_thread_id
+  const parent_turn_after_inline_review_supported = upstream.turn_start_params.some(params =>
+    isRecord(params) &&
+    params.threadId !== "upstream-thread-1" &&
+    extractTurnPrompt(params).includes("Parent turn immediately after inline review"))
   const all_thread_contexts_invalidated = compacted_contexts.length >= 2
   const review_start_refreshed_context = upstream.review_start_params.some(params =>
     isRecord(params) &&
@@ -168,6 +182,8 @@ try {
     resume_supported &&
     fork_supported &&
     detached_review_supported &&
+    inline_review_after_compaction_supported &&
+    parent_turn_after_inline_review_supported &&
     all_thread_contexts_invalidated &&
     review_start_refreshed_context &&
     upstream.thread_start_params.length >= 2 &&
@@ -193,6 +209,8 @@ try {
     resume_supported,
     fork_supported,
     detached_review_supported,
+    inline_review_after_compaction_supported,
+    parent_turn_after_inline_review_supported,
     all_thread_contexts_invalidated,
     review_start_refreshed_context,
     pcodx_tool_response_count: upstream.pcodx_tool_responses.length,

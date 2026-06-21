@@ -380,9 +380,8 @@ class FrontendProxyConnection {
     if (!isRecord(params) || typeof params.threadId !== "string") return
     const parent = this.#threads_by_client_id.get(params.threadId)
     if (!parent) return
-    const upstream_review_thread_id = result.reviewThreadId === parent.client_thread_id
-      ? parent.upstream_thread_id
-      : result.reviewThreadId
+    if (result.reviewThreadId === parent.client_thread_id || result.reviewThreadId === parent.upstream_thread_id) return
+    const upstream_review_thread_id = result.reviewThreadId
     this.#upsertThreadMapping(result.reviewThreadId, upstream_review_thread_id, parent.start_params)
   }
 
