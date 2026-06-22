@@ -10,7 +10,7 @@ import {
   ContextWindowReminderTracker,
   renderContextWindowReminder,
 } from "../src/app-server-adapter.js"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -396,25 +396,228 @@ describe("agent wrapper", () => {
     }
   })
 
-  it("exposes a Codex front-end proxy route separate from the controller REPL", () => {
-    const result = agentJson(
-      "frontend",
-      "--dry-run",
-      "--run-dir",
-      "/tmp/pcodx-frontend-dry-run",
-      "--session-id",
-      "frontend-session",
-      "--cwd",
-      "/tmp",
-      "--",
-      "--no-alt-screen",
-    )
-    expect(result.ok).toBe(true)
-    expect(result.acceptance_scope).toBe("codex front-end remote app-server proxy")
-    expect(requireString(result.codex_frontend_command)).toContain("codex --remote")
-    expect(requireString(result.codex_frontend_command)).toContain("--no-alt-screen")
-    expect(requireString(result.slash_command_surface)).toContain("/review")
-    expect(requireString(result.context_shrink_route)).toContain("fresh app-server thread")
+  it("exposes a Codex front-end proxy route separate from the controller REPL", async () => {
+    const source_codex_home = await mkdtemp(join(tmpdir(), "pcodx-source-codex-home-test-"))
+    const run_dir = await mkdtemp(join(tmpdir(), "pcodx-frontend-dry-run-"))
+    try {
+      await writeFile(join(source_codex_home, "config.toml"), [
+        'model = "gpt-5.5"',
+        'chatgpt_base_url = "http://localhost:18181/backend-api/"',
+        'openai_base_url = "http://localhost:18181"',
+        'preferred_auth_method = "chatgpt"',
+        "",
+      ].join("\n"), "utf8")
+      const result = agentJsonWithEnv(
+        {
+          OPENAI_API_KEY: "host-openai-key",
+          CODEX_API_KEY: "host-codex-key",
+          CODEX_ACCESS_TOKEN: "host-codex-token",
+          OPENAI_ACCESS_TOKEN: "host-openai-token",
+        },
+        "frontend",
+        "--dry-run",
+        "--run-dir",
+        run_dir,
+        "--source-codex-home",
+        source_codex_home,
+        "--session-id",
+        "frontend-session",
+        "--cwd",
+        "/tmp",
+        "--",
+        "--no-alt-screen",
+      )
+      expect(result.ok).toBe(true)
+      expect(result.acceptance_scope).toBe("codex front-end remote app-server proxy")
+      expect(result.child_auth_strategy).toBe("local-proxy-api-key")
+      const child_config_values = requireRecord(result.child_config_values)
+      expect(child_config_values.openai_base_url).toBe('"http://localhost:18181"')
+      expect(child_config_values.preferred_auth_method).toBeUndefined()
+      const child_env = requireRecord(result.child_env)
+      expect(child_env.OPENAI_API_KEY).toBe("cligate-local-proxy")
+      expect(child_env.CODEX_API_KEY).toBe("<unset>")
+      expect(child_env.CODEX_ACCESS_TOKEN).toBe("<unset>")
+      expect(child_env.OPENAI_ACCESS_TOKEN).toBe("<unset>")
+      expect(requireString(result.codex_frontend_command)).toContain("codex --remote")
+      expect(requireString(result.codex_frontend_command)).toContain("--no-alt-screen")
+      expect(requireString(result.slash_command_surface)).toContain("/review")
+      expect(requireString(result.context_shrink_route)).toContain("fresh app-server thread")
+    } finally {
+      await rm(source_codex_home, { recursive: true, force: true })
+      await rm(run_dir, { recursive: true, force: true })
+    }
+  })
+
+  it("refuses to launch with unmanaged child Codex auth", async () => {
+    const source_codex_home = await mkdtemp(join(tmpdir(), "pcodx-source-codex-home-test-"))
+    const run_dir = await mkdtemp(join(tmpdir(), "pcodx-frontend-launch-test-"))
+    const child_codex_home = join(run_dir, "codex-home")
+    try {
+      await mkdir(child_codex_home, { recursive: true })
+      await writeFile(join(source_codex_home, "config.toml"), [
+        'openai_base_url = "http://localhost:18181"',
+        "",
+      ].join("\n"), "utf8")
+      await writeFile(join(child_codex_home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt" }), "utf8")
+      const result = agentRaw(
+        "frontend",
+        "--run-dir",
+        run_dir,
+        "--source-codex-home",
+        source_codex_home,
+        "--child-codex-home",
+        child_codex_home,
+        "--",
+        "--no-alt-screen",
+      )
+      expect(result.status).not.toBe(0)
+      expect(result.stderr).toContain("refusing to use child Codex home with unmanaged auth.json")
+    } finally {
+      await rm(source_codex_home, { recursive: true, force: true })
+      await rm(run_dir, { recursive: true, force: true })
+    }
+  })
+
+  it("keeps front-end dry-run auth unresolved without a loopback source config", async () => {
+    const source_codex_home = await mkdtemp(join(tmpdir(), "pcodx-source-codex-home-test-"))
+    const run_dir = await mkdtemp(join(tmpdir(), "pcodx-frontend-empty-source-test-"))
+    try {
+      const result = agentJsonWithEnv(
+        { OPENAI_API_KEY: "host-key" },
+        "frontend",
+        "--dry-run",
+        "--run-dir",
+        run_dir,
+        "--source-codex-home",
+        source_codex_home,
+        "--",
+        "--no-alt-screen",
+      )
+      expect(result.child_auth_strategy).toBe("dry-run-auth-unresolved")
+      const child_env = requireRecord(result.child_env)
+      expect(child_env.OPENAI_API_KEY).toBe("<unset>")
+    } finally {
+      await rm(source_codex_home, { recursive: true, force: true })
+      await rm(run_dir, { recursive: true, force: true })
+    }
+  })
+
+  it("keeps front-end dry-run auth unresolved with only chatgpt_base_url", async () => {
+    const source_codex_home = await mkdtemp(join(tmpdir(), "pcodx-source-codex-home-test-"))
+    const run_dir = await mkdtemp(join(tmpdir(), "pcodx-frontend-chatgpt-only-test-"))
+    try {
+      await writeFile(join(source_codex_home, "config.toml"), [
+        'chatgpt_base_url = "http://localhost:18181/backend-api/"',
+        "",
+      ].join("\n"), "utf8")
+      const result = agentJson(
+        "frontend",
+        "--dry-run",
+        "--run-dir",
+        run_dir,
+        "--source-codex-home",
+        source_codex_home,
+        "--",
+        "--no-alt-screen",
+      )
+      expect(result.child_auth_strategy).toBe("dry-run-auth-unresolved")
+      const child_config_values = requireRecord(result.child_config_values)
+      expect(child_config_values.chatgpt_base_url).toBe('"http://localhost:18181/backend-api/"')
+      const child_env = requireRecord(result.child_env)
+      expect(child_env.OPENAI_API_KEY).toBe("<unset>")
+    } finally {
+      await rm(source_codex_home, { recursive: true, force: true })
+      await rm(run_dir, { recursive: true, force: true })
+    }
+  })
+
+  it("treats IPv6 loopback openai_base_url as local proxy auth", async () => {
+    const source_codex_home = await mkdtemp(join(tmpdir(), "pcodx-source-codex-home-test-"))
+    const run_dir = await mkdtemp(join(tmpdir(), "pcodx-frontend-ipv6-test-"))
+    try {
+      await writeFile(join(source_codex_home, "config.toml"), [
+        'openai_base_url = "http://[::1]:18181"',
+        "",
+      ].join("\n"), "utf8")
+      const result = agentJson(
+        "frontend",
+        "--dry-run",
+        "--run-dir",
+        run_dir,
+        "--source-codex-home",
+        source_codex_home,
+        "--",
+        "--no-alt-screen",
+      )
+      expect(result.child_auth_strategy).toBe("local-proxy-api-key")
+      const child_env = requireRecord(result.child_env)
+      expect(child_env.OPENAI_API_KEY).toBe("cligate-local-proxy")
+    } finally {
+      await rm(source_codex_home, { recursive: true, force: true })
+      await rm(run_dir, { recursive: true, force: true })
+    }
+  })
+
+  it("refuses child Codex homes that escape run_dir through symlinks", async () => {
+    const source_codex_home = await mkdtemp(join(tmpdir(), "pcodx-source-codex-home-test-"))
+    const run_dir = await mkdtemp(join(tmpdir(), "pcodx-frontend-symlink-test-"))
+    const outside_dir = await mkdtemp(join(tmpdir(), "pcodx-frontend-outside-test-"))
+    try {
+      await writeFile(join(source_codex_home, "config.toml"), [
+        'openai_base_url = "http://localhost:18181"',
+        "",
+      ].join("\n"), "utf8")
+      await symlink(outside_dir, join(run_dir, "escape"))
+      const result = agentRaw(
+        "frontend",
+        "--run-dir",
+        run_dir,
+        "--source-codex-home",
+        source_codex_home,
+        "--child-codex-home",
+        join(run_dir, "escape", "codex-home"),
+        "--",
+        "--no-alt-screen",
+      )
+      expect(result.status).not.toBe(0)
+      expect(result.stderr).toContain("child Codex home must be inside run_dir")
+    } finally {
+      await rm(source_codex_home, { recursive: true, force: true })
+      await rm(run_dir, { recursive: true, force: true })
+      await rm(outside_dir, { recursive: true, force: true })
+    }
+  })
+
+  it("refuses symlinked child Codex auth leaves", async () => {
+    const source_codex_home = await mkdtemp(join(tmpdir(), "pcodx-source-codex-home-test-"))
+    const run_dir = await mkdtemp(join(tmpdir(), "pcodx-frontend-leaf-symlink-test-"))
+    const outside_dir = await mkdtemp(join(tmpdir(), "pcodx-frontend-outside-test-"))
+    const child_codex_home = join(run_dir, "codex-home")
+    try {
+      await mkdir(child_codex_home, { recursive: true })
+      await writeFile(join(source_codex_home, "config.toml"), [
+        'openai_base_url = "http://localhost:18181"',
+        "",
+      ].join("\n"), "utf8")
+      const outside_auth = join(outside_dir, "auth.json")
+      await writeFile(outside_auth, "{}", "utf8")
+      await symlink(outside_auth, join(child_codex_home, "auth.json"))
+      const result = agentRaw(
+        "frontend",
+        "--run-dir",
+        run_dir,
+        "--source-codex-home",
+        source_codex_home,
+        "--",
+        "--no-alt-screen",
+      )
+      expect(result.status).not.toBe(0)
+      expect(result.stderr).toContain("refusing to write child Codex symlink path")
+    } finally {
+      await rm(source_codex_home, { recursive: true, force: true })
+      await rm(run_dir, { recursive: true, force: true })
+      await rm(outside_dir, { recursive: true, force: true })
+    }
   })
 
   it("summarizes evidence and artifacts from a controller run directory", async () => {
@@ -730,6 +933,12 @@ function agentJson(...args: string[]): Record<string, unknown> {
   return requireRecord(JSON.parse(result.stdout))
 }
 
+function agentJsonWithEnv(env: Record<string, string>, ...args: string[]): Record<string, unknown> {
+  const result = agentRawWithEnv(env, ...args)
+  if (result.status !== 0) throw new Error(`agent wrapper failed: ${result.stderr}`)
+  return requireRecord(JSON.parse(result.stdout))
+}
+
 function agentText(args: string[], input: string): string {
   const result = spawnSync("bun", ["run", join(ROOT, "src", "agent-cli.ts"), ...args], {
     encoding: "utf8",
@@ -741,9 +950,14 @@ function agentText(args: string[], input: string): string {
 }
 
 function agentRaw(...args: string[]): { status: number | null; stdout: string; stderr: string } {
+  return agentRawWithEnv({}, ...args)
+}
+
+function agentRawWithEnv(env: Record<string, string>, ...args: string[]): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync("bun", ["run", join(ROOT, "src", "agent-cli.ts"), ...args], {
     encoding: "utf8",
     timeout: 30000,
+    env: { ...process.env, ...env },
   })
   return {
     status: result.status,

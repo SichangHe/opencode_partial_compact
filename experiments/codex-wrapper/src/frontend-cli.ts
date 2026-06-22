@@ -1,7 +1,10 @@
 #!/usr/bin/env bun
 import { spawn } from "node:child_process"
+import { existsSync } from "node:fs"
+import { lstat, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises"
 import { createConnection, createServer } from "node:net"
-import { resolve } from "node:path"
+import { homedir } from "node:os"
+import { join, relative, resolve, sep } from "node:path"
 import { startPcodxFrontendProxy, FRONTEND_ACCEPTANCE_SCOPE, FRONTEND_ACCEPTANCE_SCOPE_TEXT } from "./frontend-proxy.js"
 
 type ParsedArgs = {
@@ -9,8 +12,33 @@ type ParsedArgs = {
   codex_args: string[]
 }
 
+type ChildCodexSetup = {
+  child_codex_home: string
+  source_codex_home: string
+  config_path: string
+  auth_path: string
+  auth_strategy: string
+  config_values: Record<string, string>
+  env: NodeJS.ProcessEnv
+}
+
 const DEFAULT_RUN_DIR = "runs/frontend-proxy"
 const DEFAULT_SESSION_ID = "pcodx-frontend"
+const DEFAULT_PROXY_API_KEY = "cligate-local-proxy"
+const CHILD_AUTH_MARKER = "pcodx-frontend-proxy"
+const AUTH_ENV_KEYS = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_ACCESS_TOKEN"]
+const SAFE_TOP_LEVEL_CONFIG_KEYS = [
+  "model",
+  "model_provider",
+  "model_reasoning_effort",
+  "model_reasoning_summary",
+  "approval_policy",
+  "sandbox_mode",
+  "chatgpt_base_url",
+  "openai_base_url",
+  "disable_response_storage",
+]
+const MANAGED_CONFIG_MARKER = `# pcodx_managed_by = "${CHILD_AUTH_MARKER}"`
 
 async function main(argv: string[]): Promise<void> {
   const parsed = parseArgs(argv)
@@ -25,9 +53,19 @@ async function main(argv: string[]): Promise<void> {
   const upstream_port = await choosePort(parsed, "upstream-port")
   const proxy_url = `ws://127.0.0.1:${proxy_port}`
   const upstream_url = `ws://127.0.0.1:${upstream_port}`
+  const child_codex_home = resolve(lastFlag(parsed, "child-codex-home") ?? join(run_dir, "codex-home"))
+  const source_codex_home = resolve(lastFlag(parsed, "source-codex-home") ?? process.env.CODEX_HOME ?? join(homedir(), ".codex"))
+  const dry_run = parsed.flags.has("dry-run")
+  const child_setup = await prepareChildCodexSetup({
+    child_codex_home,
+    source_codex_home,
+    run_dir,
+    cwd,
+    write_files: !dry_run,
+  })
   const codex_cmd = ["codex", "--remote", proxy_url, ...parsed.codex_args]
   const app_server_cmd = ["codex", "app-server", "--listen", upstream_url]
-  if (parsed.flags.has("dry-run")) {
+  if (dry_run) {
     printJson({
       ok: true,
       dry_run: true,
@@ -35,6 +73,13 @@ async function main(argv: string[]): Promise<void> {
       acceptance_scope_text: FRONTEND_ACCEPTANCE_SCOPE_TEXT,
       run_dir,
       session_id,
+      source_codex_home: child_setup.source_codex_home,
+      child_codex_home: child_setup.child_codex_home,
+      child_config_path: child_setup.config_path,
+      child_auth_path: child_setup.auth_path,
+      child_auth_strategy: child_setup.auth_strategy,
+      child_config_values: child_setup.config_values,
+      child_env: redactedChildEnv(child_setup.env),
       upstream_url,
       proxy_url,
       codex_frontend_command: shellCommand(codex_cmd),
@@ -46,6 +91,7 @@ async function main(argv: string[]): Promise<void> {
   }
   const app_server = spawn(app_server_cmd[0] ?? "", app_server_cmd.slice(1), {
     stdio: ["ignore", "pipe", "pipe"],
+    env: child_setup.env,
   })
   app_server.stderr.on("data", chunk => process.stderr.write(String(chunk)))
   app_server.stdout.on("data", chunk => process.stderr.write(String(chunk)))
@@ -62,9 +108,11 @@ async function main(argv: string[]): Promise<void> {
     process.stdout.write(`${FRONTEND_ACCEPTANCE_SCOPE_TEXT}\n`)
     process.stdout.write(`pcodx_proxy_url=${proxy.url}\n`)
     process.stdout.write(`pcodx_run_dir=${run_dir}\n`)
+    process.stdout.write(`pcodx_child_codex_home=${child_setup.child_codex_home}\n`)
     const codex = spawn(codex_cmd[0] ?? "", codex_cmd.slice(1), {
       stdio: "inherit",
       cwd,
+      env: child_setup.env,
     })
     const status = await waitForExit(codex)
     proxy.stop()
@@ -98,6 +146,199 @@ function parseArgs(argv: string[]): ParsedArgs {
     flags.set(key, values)
   }
   return { flags, codex_args }
+}
+
+async function prepareChildCodexSetup(input: { child_codex_home: string; source_codex_home: string; run_dir: string; cwd: string; write_files: boolean }): Promise<ChildCodexSetup> {
+  const config_values = await readSourceConfigValues(input.source_codex_home)
+  const config_text = renderChildConfig(config_values, input.cwd)
+  const config_path = join(input.child_codex_home, "config.toml")
+  const auth_path = join(input.child_codex_home, "auth.json")
+  const auth_strategy = resolveAuthStrategy(config_values)
+  const env = childCodexEnv(input.child_codex_home, auth_strategy)
+  if (input.write_files) {
+    if (auth_strategy !== "local-proxy-api-key") {
+      throw new Error("PCODX native front-end launcher requires loopback openai_base_url in the source Codex config")
+    }
+    await mkdir(input.run_dir, { recursive: true })
+    await verifyChildHomePaths(input.child_codex_home, input.source_codex_home, input.run_dir)
+    await verifyNoSymlinkLeaf(config_path)
+    await verifyNoSymlinkLeaf(auth_path)
+    if (existsSync(config_path)) await verifyExistingChildConfig(config_path)
+    if (existsSync(auth_path)) await verifyExistingChildAuth(auth_path)
+    await mkdir(input.child_codex_home, { recursive: true })
+    await writeFile(config_path, config_text, { encoding: "utf8", mode: 0o600 })
+    await writeFile(auth_path, renderChildAuth(auth_strategy), { encoding: "utf8", mode: 0o600 })
+  }
+  return {
+    child_codex_home: input.child_codex_home,
+    source_codex_home: input.source_codex_home,
+    config_path,
+    auth_path,
+    auth_strategy,
+    config_values,
+    env,
+  }
+}
+
+async function readSourceConfigValues(source_codex_home: string): Promise<Record<string, string>> {
+  const path = join(source_codex_home, "config.toml")
+  const text = await readFile(path, "utf8").catch((err: unknown) => {
+    if (isMissingFileError(err)) return ""
+    throw err
+  })
+  return parseSafeTopLevelConfig(text)
+}
+
+function parseSafeTopLevelConfig(text: string): Record<string, string> {
+  const values: Record<string, string> = {}
+  for (const line of text.split(/\r?\n/)) {
+    if (/^\s*\[/.test(line)) break
+    const match = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$/.exec(line)
+    if (!match) continue
+    const [, key, raw_value] = match
+    if (key === undefined || raw_value === undefined || !SAFE_TOP_LEVEL_CONFIG_KEYS.includes(key)) continue
+    values[key] = raw_value
+  }
+  return values
+}
+
+function renderChildConfig(values: Record<string, string>, cwd: string): string {
+  const lines = [MANAGED_CONFIG_MARKER, ...SAFE_TOP_LEVEL_CONFIG_KEYS.flatMap(key => values[key] === undefined ? [] : [`${key} = ${values[key]}`])]
+  lines.push("", `[projects.${tomlString(cwd)}]`, `trust_level = "trusted"`, "")
+  return lines.join("\n")
+}
+
+function resolveAuthStrategy(config_values: Record<string, string>): string {
+  if (isLoopbackUrl(tomlStringValue(config_values.openai_base_url))) {
+    return "local-proxy-api-key"
+  }
+  return "dry-run-auth-unresolved"
+}
+
+function childCodexEnv(child_codex_home: string, auth_strategy: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    CODEX_HOME: child_codex_home,
+  }
+  for (const key of AUTH_ENV_KEYS) delete env[key]
+  if (auth_strategy === "local-proxy-api-key") {
+    env.OPENAI_API_KEY = DEFAULT_PROXY_API_KEY
+  }
+  return env
+}
+
+function renderChildAuth(auth_strategy: string): string {
+  if (auth_strategy !== "local-proxy-api-key") {
+    throw new Error("PCODX child auth file is only generated for the loopback local-proxy API key")
+  }
+  return `${JSON.stringify({
+    auth_mode: "apikey",
+    OPENAI_API_KEY: DEFAULT_PROXY_API_KEY,
+    tokens: null,
+    last_refresh: null,
+    cligate_managed_by: "cligate",
+    cligate_bootstrap_mode: "api-key",
+    pcodx_managed_by: CHILD_AUTH_MARKER,
+  }, null, 2)}\n`
+}
+
+async function verifyChildHomePaths(child_codex_home: string, source_codex_home: string, run_dir: string): Promise<void> {
+  const child_path = resolve(child_codex_home)
+  const source_path = await realpathIfExists(source_codex_home)
+  const run_path = await realpathExistingDirectory(run_dir)
+  const child_existing_path = await realpathIfExists(child_path)
+  const child_resolved_path = child_existing_path ?? await resolveProspectivePath(child_path)
+  if (child_path === source_path || child_resolved_path === source_path) {
+    throw new Error(`refusing to use source Codex home as child Codex home: ${child_codex_home}`)
+  }
+  const rel = relative(run_path, child_resolved_path)
+  if (rel === ".." || rel.startsWith(`..${sep}`)) {
+    throw new Error(`child Codex home must be inside run_dir: ${child_codex_home}`)
+  }
+}
+
+async function realpathExistingDirectory(path: string): Promise<string> {
+  const real = await realpath(path)
+  const info = await stat(real)
+  if (!info.isDirectory()) throw new Error(`path must be a directory: ${path}`)
+  return real
+}
+
+async function resolveProspectivePath(path: string): Promise<string> {
+  const parts = resolve(path).split(sep).filter(Boolean)
+  let current: string = sep
+  for (let i = 0; i < parts.length; i += 1) {
+    const candidate = join(current, parts[i] ?? "")
+    const real = await realpathIfExists(candidate)
+    if (real === null) return join(current, ...parts.slice(i))
+    current = real
+  }
+  return current
+}
+
+async function verifyExistingChildConfig(config_path: string): Promise<void> {
+  const text = await readFile(config_path, "utf8")
+  if (!text.includes(MANAGED_CONFIG_MARKER)) {
+    throw new Error(`refusing to overwrite unmanaged child config.toml: ${config_path}`)
+  }
+}
+
+async function verifyNoSymlinkLeaf(path: string): Promise<void> {
+  const info = await lstat(path).catch((err: unknown) => {
+    if (isMissingFileError(err)) return null
+    throw err
+  })
+  if (info?.isSymbolicLink()) throw new Error(`refusing to write child Codex symlink path: ${path}`)
+}
+
+async function verifyExistingChildAuth(auth_path: string): Promise<void> {
+  const parsed: unknown = JSON.parse(await readFile(auth_path, "utf8"))
+  if (!isRecord(parsed) || parsed.pcodx_managed_by !== CHILD_AUTH_MARKER || parsed.auth_mode !== "apikey") {
+    throw new Error(`refusing to use child Codex home with unmanaged auth.json: ${auth_path}`)
+  }
+}
+
+async function realpathIfExists(path: string): Promise<string | null> {
+  return await realpath(path).catch((err: unknown) => {
+    if (isMissingFileError(err)) return null
+    throw err
+  })
+}
+
+function tomlStringValue(raw_value: string | undefined): string | null {
+  if (raw_value === undefined) return null
+  const trimmed = raw_value.trim()
+  const match = /^"((?:[^"\\]|\\.)*)"/.exec(trimmed)
+  if (!match) return null
+  try {
+    return JSON.parse(`"${match[1]}"`) as string
+  } catch {
+    return null
+  }
+}
+
+function tomlString(value: string): string {
+  return JSON.stringify(value)
+}
+
+function isLoopbackUrl(value: string | null): boolean {
+  if (!value) return false
+  try {
+    const url = new URL(value)
+    return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1" || url.hostname === "[::1]"
+  } catch {
+    return false
+  }
+}
+
+function redactedChildEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  const result: Record<string, string> = {
+    CODEX_HOME: env.CODEX_HOME ?? "",
+  }
+  for (const key of AUTH_ENV_KEYS) {
+    result[key] = env[key] === DEFAULT_PROXY_API_KEY ? DEFAULT_PROXY_API_KEY : env[key] ? "<set>" : "<unset>"
+  }
+  return result
 }
 
 async function choosePort(parsed: ParsedArgs, key: string): Promise<number> {
@@ -169,6 +410,14 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`
 }
 
+function isMissingFileError(err: unknown): boolean {
+  return typeof err === "object" && err !== null && "code" in err && err.code === "ENOENT"
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
 function printJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`)
 }
@@ -185,6 +434,8 @@ function printHelp(): void {
     `  --run-dir <path>       default ${DEFAULT_RUN_DIR}`,
     `  --session-id <id>      default ${DEFAULT_SESSION_ID}`,
     "  --cwd <path>           Codex working directory",
+    "  --child-codex-home <path>  child Codex home for spawned native UI and app-server",
+    "  --source-codex-home <path> source Codex home to copy non-secret routing defaults from",
     "  --proxy-port <port>    proxy listen port",
     "  --upstream-port <port> upstream app-server listen port",
     "  --dry-run              print commands without launching",

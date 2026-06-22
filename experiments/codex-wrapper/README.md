@@ -78,6 +78,10 @@
   - `bun run agent -- frontend -- --no-alt-screen`
   - launches real Codex front-end with `codex --remote`
   - starts a real upstream `codex app-server`
+  - both spawned Codex processes use a child `CODEX_HOME` under the run directory
+  - the child config copies only non-secret routing defaults such as model and proxy base URLs from the human's normal Codex config
+  - for the local proxy setup, the launcher writes a dummy `auth_mode="apikey"` child auth file with `cligate-local-proxy`
+  - this keeps the native UI out of ChatGPT login/refresh-token rotation while preserving the human proxy route
   - places a PCODX websocket proxy between them
   - native Codex owns slash-command parsing, TUI rendering, approval UX, status, and history UI
   - `/review` remains native front-end behavior and reaches app-server `review/start`
