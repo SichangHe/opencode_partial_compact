@@ -81,6 +81,35 @@ describe("WrapperLedger", () => {
     expect(context).not.toContain("stale two")
   })
 
+  it("uses compacted ids as visible compaction range boundaries", () => {
+    const ledger = new WrapperLedger("test-session")
+    const first = ledger.append("assistant", "stale one")
+    const second = ledger.append("tool", "stale two")
+    const third = ledger.append("assistant", "stale three")
+    const first_result = ledger.partialCompact({
+      from_message_id: first.id,
+      to_message_id: second.id,
+      summary: "first summary",
+    })
+    expect(first_result.ok).toBe(true)
+    expect(ledger.currentVisibleMessageIds()).toEqual(["cmp000001", third.id])
+
+    const second_result = ledger.partialCompact({
+      from_message_id: "cmp000001",
+      to_message_id: third.id,
+      summary: "merged summary",
+    })
+
+    expect(second_result.ok).toBe(true)
+    if (!second_result.ok) throw new Error("expected compaction success")
+    expect(second_result.visible_message_ids).toEqual(["cmp000002"])
+    const context = ledger.renderVisibleContext("system")
+    expect(context).toContain(`<compacted id="cmp000002" range="${first.id}..${third.id}">`)
+    expect(context).toContain("merged summary")
+    expect(context).not.toContain("first summary")
+    expect(context).not.toContain("stale three")
+  })
+
   it("rejects overlapping requested ranges without partial writes", () => {
     const ledger = new WrapperLedger("test-session")
     const first = ledger.append("assistant", "one")
@@ -190,6 +219,39 @@ describe("pcodx MCP sidecar", () => {
       await rm(run_dir, { recursive: true, force: true })
     }
   })
+
+  it("preserves compacted ids when loading an existing sidecar ledger", async () => {
+    const run_dir = await mkdtemp(join(tmpdir(), "pcodx-mcp-load-test-"))
+    const ledger_path = join(run_dir, "ledger.json")
+    const ledger = new WrapperLedger("pcodx-mcp-load-test")
+    const first = ledger.append("user", "old one")
+    const second = ledger.append("assistant", "old two")
+    const result = ledger.partialCompact({
+      from_message_id: first.id,
+      to_message_id: second.id,
+      summary: "old summary",
+    })
+    expect(result.ok).toBe(true)
+    await writeFile(ledger_path, `${JSON.stringify(ledger.snapshot(), null, 2)}\n`, "utf8")
+    const transport = new StdioClientTransport({
+      command: "bun",
+      args: ["run", join(ROOT, "src", "mcp-server.ts")],
+      env: {
+        ...process.env,
+        PCODX_LEDGER_PATH: ledger_path,
+        PCODX_SESSION_ID: "pcodx-mcp-load-test",
+      },
+    })
+    const client = new Client({ name: "pcodx-mcp-load-test", version: "0.1.0" })
+    try {
+      await client.connect(transport)
+      const current_ids = toolJson(await client.callTool({ name: "partial_compact_current_ids", arguments: {} }))
+      expect(current_ids.visible_message_ids).toEqual(["cmp000001"])
+    } finally {
+      await client.close()
+      await rm(run_dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe("demo", () => {
@@ -225,7 +287,7 @@ describe("SelfCompactingCodexController", () => {
     expect(history).not.toContain("PCODX_RAW_CONTROLLER_SENTINEL_A")
     expect(history).not.toContain("PCODX_RAW_CONTROLLER_SENTINEL_B")
     expect(controller.currentVisibleMessageIds()).toEqual(["cmp000001"])
-    expect(controller.compactableMessageIds()).toEqual([])
+    expect(controller.compactableMessageIds()).toEqual(["cmp000001"])
   })
 })
 

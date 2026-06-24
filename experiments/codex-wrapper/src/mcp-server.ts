@@ -5,7 +5,6 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { WrapperLedger } from "./ledger.js"
 import { pcodx_startup_instructions } from "./pcodx-instructions.js"
-import type { CompactionRecord, LedgerMessage } from "./types.js"
 
 const session_id = process.env.PCODX_SESSION_ID ?? `pcodx-${process.pid}`
 const run_dir = process.env.PCODX_RUN_DIR ?? `/tmp/pcodx-runs/${session_id}`
@@ -68,8 +67,8 @@ server.registerTool(
 server.registerTool(
   "partial_compact_current_ids",
   {
-    title: "List visible pcodx message ids",
-    description: "Return the current visible ids from the pcodx sidecar ledger.",
+    title: "List visible pcodx ids",
+    description: "Return the current visible message and compacted-range ids from the pcodx sidecar ledger.",
   },
   current_session_message_ids,
 )
@@ -77,7 +76,7 @@ server.registerTool(
 server.registerTool(
   "partial_compact_current_session_message_ids",
   {
-    title: "List visible pcodx message ids",
+    title: "List visible pcodx ids",
     description: "Compatibility alias for partial_compact_current_ids.",
   },
   current_session_message_ids,
@@ -107,32 +106,14 @@ function current_session_message_ids() {
 
 await server.connect(new StdioServerTransport())
 
-type LedgerSnapshot = {
-  session_id?: string
-  messages?: LedgerMessage[]
-  compactions?: CompactionRecord[]
-}
-
 function loadLedger(path: string, fallback_session_id: string): WrapperLedger {
   const loaded = readSnapshot(path)
-  const new_ledger = new WrapperLedger(loaded?.session_id ?? fallback_session_id)
-  for (const message of loaded?.messages ?? []) {
-    new_ledger.append(message.role, message.text, message.source)
-  }
-  for (const compaction of loaded?.compactions ?? []) {
-    const result = new_ledger.partialCompact({
-      from_message_id: compaction.from_message_id,
-      to_message_id: compaction.to_message_id,
-      summary: compaction.summary,
-    })
-    if (!result.ok) throw new Error(`invalid stored compaction ${compaction.id}: ${result.error}`)
-  }
-  return new_ledger
+  return loaded === null ? new WrapperLedger(fallback_session_id) : WrapperLedger.fromSnapshot(loaded)
 }
 
-function readSnapshot(path: string): LedgerSnapshot | null {
+function readSnapshot(path: string): unknown | null {
   try {
-    return JSON.parse(readFileSync(path, "utf-8")) as LedgerSnapshot
+    return JSON.parse(readFileSync(path, "utf-8")) as unknown
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return null
     throw error

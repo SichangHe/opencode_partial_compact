@@ -83,26 +83,30 @@ export class WrapperLedger {
 
   partialCompactRanges(ranges: PartialCompactRange[]): PartialCompactRangesResult {
     if (ranges.length === 0) return { ok: false, error: "ranges must be non-empty" }
-    const pending: Array<{ range: PartialCompactRange; from_idx: number; to_idx: number; summary: string }> = []
+    const pending: Array<{ range: PartialCompactRange; from_idx: number; to_idx: number; summary: string; covered_compaction_ids: string[] }> = []
 
     for (const range of ranges) {
       const summary = range.summary.trim()
       if (summary.length === 0) return { ok: false, error: "summary must be non-empty" }
 
-      const from_idx = this.messages.findIndex(msg => msg.id === range.from_message_id)
-      if (from_idx === -1) return { ok: false, error: `from_message_id ${range.from_message_id} not found` }
-
-      const to_idx = this.messages.findIndex(msg => msg.id === range.to_message_id)
-      if (to_idx === -1) return { ok: false, error: `to_message_id ${range.to_message_id} not found` }
+      const from_idx = this.boundaryMessageIndex(range.from_message_id, "from_message_id", "from")
+      if (typeof from_idx === "string") return { ok: false, error: from_idx }
+      const to_idx = this.boundaryMessageIndex(range.to_message_id, "to_message_id", "to")
+      if (typeof to_idx === "string") return { ok: false, error: to_idx }
       if (from_idx > to_idx) {
         return { ok: false, error: `${range.from_message_id} comes after ${range.to_message_id}` }
       }
 
+      const covered_compaction_ids: string[] = []
       for (const record of this.compactions) {
         const rec_from_idx = this.mustMessageIndex(record.from_message_id)
         const rec_to_idx = this.mustMessageIndex(record.to_message_id)
         if (from_idx <= rec_to_idx && to_idx >= rec_from_idx) {
-          return { ok: false, error: `range overlaps compaction ${record.id}` }
+          if (from_idx <= rec_from_idx && rec_to_idx <= to_idx) {
+            covered_compaction_ids.push(record.id)
+            continue
+          }
+          return { ok: false, error: `range partially overlaps compaction ${record.id}; use the visible ${record.id} boundary or choose a non-overlapping range` }
         }
       }
 
@@ -112,15 +116,21 @@ export class WrapperLedger {
         }
       }
 
-      pending.push({ range, from_idx, to_idx, summary })
+      pending.push({ range, from_idx, to_idx, summary, covered_compaction_ids })
     }
 
     const records: CompactionRecord[] = []
+    const covered_compaction_ids = new Set(pending.flatMap(item => item.covered_compaction_ids))
+    if (covered_compaction_ids.size > 0) {
+      for (let i = this.compactions.length - 1; i >= 0; i -= 1) {
+        if (covered_compaction_ids.has(this.compactions[i]?.id ?? "")) this.compactions.splice(i, 1)
+      }
+    }
     for (const item of pending) {
       const record: CompactionRecord = {
         id: formatCompactionId(this.#next_compaction_n),
-        from_message_id: item.range.from_message_id,
-        to_message_id: item.range.to_message_id,
+        from_message_id: this.messages[item.from_idx]?.id ?? item.range.from_message_id,
+        to_message_id: this.messages[item.to_idx]?.id ?? item.range.to_message_id,
         summary: item.summary,
         created_at_iso: new Date(0).toISOString(),
         n_messages_replaced: item.to_idx - item.from_idx + 1,
@@ -188,6 +198,14 @@ export class WrapperLedger {
     const idx = this.messages.findIndex(msg => msg.id === message_id)
     if (idx === -1) throw new Error(`message ${message_id} vanished from ledger`)
     return idx
+  }
+
+  private boundaryMessageIndex(id: string, field: string, side: "from" | "to"): number | string {
+    const msg_idx = this.messages.findIndex(msg => msg.id === id)
+    if (msg_idx !== -1) return msg_idx
+    const record = this.compactions.find(compaction => compaction.id === id)
+    if (!record) return `${field} ${id} not found`
+    return this.mustMessageIndex(side === "from" ? record.from_message_id : record.to_message_id)
   }
 }
 

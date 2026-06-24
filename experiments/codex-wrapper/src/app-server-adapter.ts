@@ -572,7 +572,7 @@ export function renderContextWindowReminder(usage: CodexThreadTokenUsage): strin
     ? `last completed model-call input was ${formatInt(last_input_tokens)} tokens; model context window was not reported`
     : `last completed model-call input was ${formatInt(last_input_tokens)} of ${formatInt(context_window)} tokens (${formatPercent(last_input_tokens / context_window)})`
   return [
-    `PCODX context-window reminder: ${window_text}.`,
+    `pcodx context-window reminder: ${window_text}.`,
     `Completed-turn total so far is ${formatInt(usage.total.totalTokens)} tokens.`,
     `Action: ${contextReminderAction(last_input_tokens, context_window)}.`,
   ].join(" ")
@@ -608,16 +608,16 @@ function parseTokenUsageBreakdown(raw: unknown): TokenUsageBreakdown | null {
 
 function contextReminderAction(last_input_tokens: number, context_window: number | null): string {
   if (context_window === null) {
-    return "watch growth; if context feels crowded, record durable state and compact stale recorded ranges"
+    return "watch growth; if context feels crowded, record durable state and consider partial_compact on stale visible ids"
   }
   const fraction = last_input_tokens / context_window
   if (fraction >= COMPACT_NOW_CONTEXT_FRACTION) {
-    return "record durable state now, compact stale recorded ranges, or ask the manager to compact or resume with preserved context"
+    return "record durable state now, consider partial_compact on stale visible ids, or ask the manager to compact or resume with preserved context"
   }
   if (fraction >= COMPACT_SOON_CONTEXT_FRACTION) {
-    return "finish the current narrow step, then compact stale recorded ranges before broad exploration"
+    return "finish the current narrow step, then consider partial_compact on stale visible ids before broad exploration"
   }
-  return "continue normal work and compact at the existing PCODX trigger points"
+  return "continue normal work and consider partial_compact at the existing pcodx trigger points"
 }
 
 function effectiveContextReminderInterval(configured_interval_tokens: number, context_window: number | null): number | null {

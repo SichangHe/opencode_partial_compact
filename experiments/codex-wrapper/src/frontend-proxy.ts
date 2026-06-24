@@ -1,5 +1,6 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises"
 import { join, resolve } from "node:path"
+import { ContextWindowReminderTracker } from "./app-server-adapter.js"
 import { WrapperLedger } from "./ledger.js"
 import type { PartialCompactRange } from "./types.js"
 
@@ -54,6 +55,12 @@ type ThreadState = {
   pending_turn_receipt: Promise<void> | null
 }
 
+type PcodxToolResult = {
+  contentItems: Array<{ type: "inputText"; text: string }>
+  success: boolean
+  compacted: boolean
+}
+
 type LedgerState = {
   run_dir: string
   ledger_path: string
@@ -82,15 +89,17 @@ export const FRONTEND_ACCEPTANCE_SCOPE_TEXT = `acceptance_scope=${FRONTEND_ACCEP
 const PCODX_DEVELOPER_INSTRUCTIONS = [
   "PCODX partial compaction is available in this Codex front-end session through dynamic tools.",
   "The proxy injects a small PCODX turn ledger id receipt after each completed non-compacting turn.",
-  "Use those visible `msg...` ids in `partial_compact` ranges; call `partial_compact_current_session_message_ids` if you need to refresh the current compactable id list.",
+  "Use visible `msg...` message ids or `cmp...` compacted-range ids in `partial_compact` ranges; call `partial_compact_current_session_message_ids` if you need to refresh the current visible id list.",
+  "`cmp...` ids refer to already-compacted ranges and can be used as range endpoints when merging or replacing older summaries.",
   "Use `partial_compact` to replace stale ledger ranges with faithful summaries.",
+  "When a pcodx context-window reminder appears, consider whether stale visible ids should be compacted before broad exploration.",
   "After a successful PCODX compaction, the proxy starts the next upstream app-server turn from a fresh thread seeded only with the compacted ledger render.",
 ].join("\n")
 
 const PCODX_DYNAMIC_TOOLS = [
   {
     name: "partial_compact_current_session_message_ids",
-    description: "Return the currently visible PCODX ledger ids after front-end proxy compactions.",
+    description: "Return the currently visible PCODX ledger ids after front-end proxy compactions, including message ids and compacted-range ids.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -99,7 +108,7 @@ const PCODX_DYNAMIC_TOOLS = [
   },
   {
     name: "partial_compact",
-    description: "Replace one or more disjoint ranges of prior PCODX ledger messages with faithful summaries for future Codex front-end turns.",
+    description: "Replace one or more disjoint ranges of visible PCODX ledger ids with faithful summaries for future Codex front-end turns. Range endpoints can be msg... message ids or cmp... compacted-range ids.",
     inputSchema: {
       type: "object",
       properties: {
@@ -169,6 +178,7 @@ class FrontendProxyConnection {
   readonly #pending_internal_requests = new Map<RequestId, PendingInternalRequest>()
   readonly #threads_by_client_id = new Map<string, ThreadState>()
   readonly #threads_by_upstream_id = new Map<string, ThreadState>()
+  readonly #reminders = new ContextWindowReminderTracker()
   #n_internal_thread_starts_pending = 0
 
   constructor(client: ClientSocket, upstream_url: string, ledger_state: LedgerState, cwd: string | undefined) {
@@ -239,7 +249,8 @@ class FrontendProxyConnection {
     }
     if (method === "turn/start") {
       const thread = await this.#prepareTurnStart(params)
-      return { params: rewriteThreadIds(params, thread.client_thread_id, thread.upstream_thread_id), turn_thread: thread }
+      const prepared = this.#withContextReminder(params, thread)
+      return { params: rewriteThreadIds(prepared, thread.client_thread_id, thread.upstream_thread_id), turn_thread: thread }
     }
     if (method === "review/start") {
       const thread = await this.#prepareReviewStart(params)
@@ -318,6 +329,17 @@ class FrontendProxyConnection {
     }
   }
 
+  #withContextReminder(params: unknown, thread: ThreadState): unknown {
+    const reminder_context = this.#reminders.additionalContext(thread.upstream_thread_id)
+    if (reminder_context === undefined) return params
+    const raw = isRecord(params) ? { ...params } : {}
+    raw.additionalContext = {
+      ...(isRecord(raw.additionalContext) ? raw.additionalContext : {}),
+      ...reminder_context,
+    }
+    return raw
+  }
+
   async #handleUpstreamMessage(data: unknown): Promise<void> {
     const msg = parseJsonRpcMessage(data)
     if (isRequest(msg)) {
@@ -341,6 +363,7 @@ class FrontendProxyConnection {
   async #handleUpstreamRequest(msg: { id: RequestId; method: string; params: unknown }): Promise<void> {
     if (msg.method === "item/tool/call" && isPcodxToolCall(msg.params)) {
       const result = await this.#handlePcodxToolCall(msg.params)
+      this.#sendPcodxToolVisibleItem(msg.params, result)
       this.#sendUpstream({ id: msg.id, result })
       return
     }
@@ -418,6 +441,7 @@ class FrontendProxyConnection {
       thread.current_turn.assistant_text += delta
       return
     }
+    this.#reminders.observe(method, params)
     if (method === "item/completed" && thread.current_turn) {
       const transcript = renderCompletedItemTranscript(params)
       if (transcript) thread.current_turn.completed_item_transcripts.push(transcript)
@@ -478,7 +502,7 @@ class FrontendProxyConnection {
     const text = [
       "PCODX turn ledger ids:",
       ...recorded_ids.map(id => `- ${id}`),
-      `Visible compactable message ids: ${compactableMessageIds(this.#ledger_state.ledger).join(", ") || "(none)"}`,
+      `Visible pcodx ids: ${compactableMessageIds(this.#ledger_state.ledger).join(", ") || "(none)"}`,
       "Use these exact ids in `partial_compact` ranges when compacting this session.",
     ].join("\n")
     await this.#requestUpstream("thread/inject_items", {
@@ -491,17 +515,19 @@ class FrontendProxyConnection {
     })
   }
 
-  async #handlePcodxToolCall(params: Record<string, unknown>): Promise<unknown> {
+  async #handlePcodxToolCall(params: Record<string, unknown>): Promise<PcodxToolResult> {
     const thread = typeof params.threadId === "string" ? this.#threads_by_upstream_id.get(params.threadId) : undefined
     const tool = params.tool
     let text: string
     let success = true
     let compacted = false
     if (tool === "partial_compact_current_session_message_ids") {
+      const visible_ids = compactableMessageIds(this.#ledger_state.ledger)
       text = JSON.stringify({
         ok: true,
-        visible_message_ids: compactableMessageIds(this.#ledger_state.ledger),
-        visible_entry_ids: this.#ledger_state.ledger.currentVisibleMessageIds(),
+        visible_ids,
+        visible_message_ids: visible_ids,
+        visible_entry_ids: visible_ids,
         future_model_visible_context_source: FRONTEND_ACCEPTANCE_SCOPE,
       }, null, 2)
     } else if (tool === "partial_compact") {
@@ -530,6 +556,31 @@ class FrontendProxyConnection {
       success,
       compacted,
     }
+  }
+
+  #sendPcodxToolVisibleItem(params: Record<string, unknown>, result: PcodxToolResult): void {
+    const thread = this.#threadFromUpstreamParams(params)
+    const thread_id = thread?.client_thread_id ?? (typeof params.threadId === "string" ? params.threadId : undefined)
+    if (!thread_id) return
+    this.#client.send(JSON.stringify({
+      method: "item/completed",
+      params: {
+        threadId: thread_id,
+        turnId: params.turnId,
+        completedAtMs: Date.now(),
+        item: {
+          type: "dynamicToolCall",
+          id: typeof params.callId === "string" ? params.callId : `pcodx-tool-${Date.now()}`,
+          namespace: null,
+          tool: params.tool,
+          arguments: params.arguments,
+          contentItems: result.contentItems,
+          status: result.success ? "completed" : "failed",
+          success: result.success,
+          durationMs: 0,
+        },
+      },
+    }))
   }
 
   #invalidateAllThreads(): void {
@@ -667,7 +718,7 @@ function mergeDynamicTools(existing: unknown, tools: typeof PCODX_DYNAMIC_TOOLS)
 }
 
 function compactableMessageIds(ledger: WrapperLedger): string[] {
-  return ledger.visibleEntries().flatMap(entry => entry.kind === "message" ? [entry.message.id] : [])
+  return ledger.currentVisibleMessageIds()
 }
 
 function compactionReceipt(result: ReturnType<WrapperLedger["partialCompactRanges"]>, ledger: WrapperLedger): Record<string, unknown> {
@@ -683,6 +734,7 @@ function compactionReceipt(result: ReturnType<WrapperLedger["partialCompactRange
       n_messages_replaced: record.n_messages_replaced,
     })),
     future_model_context_rewritten_by_frontend_proxy_on_next_turn: true,
+    visible_ids: compactableMessageIds(ledger),
     visible_message_ids: compactableMessageIds(ledger),
     visible_entry_ids: ledger.currentVisibleMessageIds(),
   }

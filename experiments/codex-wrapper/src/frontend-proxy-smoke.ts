@@ -22,6 +22,7 @@ type FakeUpstream = {
   thread_start_params: unknown[]
   turn_start_params: unknown[]
   turn_start_receipt_seen: boolean[]
+  turn_start_reminder_seen: boolean[]
   injected_contexts: string[]
   review_start_params: unknown[]
   native_compact_start_params: unknown[]
@@ -34,6 +35,7 @@ type JsonRpcClient = {
   request(method: string, params: unknown): Promise<unknown>
   notify(method: string, params: unknown): void
   close(): void
+  notifications: JsonRpcMessage[]
 }
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
@@ -164,9 +166,23 @@ try {
     context.includes("user=msg000003") &&
     context.includes("tool=msg000004") &&
     context.includes("assistant=msg000005") &&
-    context.includes("Visible compactable message ids"))
+    context.includes("Visible pcodx ids"))
   const trigger_compaction_turn_idx = upstream.turn_start_params.findIndex(params => isRecord(params) && extractTurnPrompt(params).includes("Trigger PCODX partial compaction."))
   const trigger_compaction_saw_prior_receipt = trigger_compaction_turn_idx >= 0 && upstream.turn_start_receipt_seen[trigger_compaction_turn_idx] === true
+  const trigger_compaction_saw_context_reminder = trigger_compaction_turn_idx >= 0 && upstream.turn_start_reminder_seen[trigger_compaction_turn_idx] === true
+  const pcodx_tool_visible_in_client = client.notifications.some(msg =>
+    msg.method === "item/completed" &&
+    isRecord(msg.params) &&
+    typeof msg.params.completedAtMs === "number" &&
+    isRecord(msg.params.item) &&
+    msg.params.item.type === "dynamicToolCall" &&
+    msg.params.item.tool === "partial_compact" &&
+    msg.params.item.namespace === null &&
+    Array.isArray(msg.params.item.contentItems) &&
+    msg.params.item.status === "completed" &&
+    msg.params.item.success === true &&
+    typeof msg.params.item.durationMs === "number" &&
+    msg.params.item.result === undefined)
   const resume_supported = upstream.resume_params.length === 1 && resumed_thread_id === "upstream-resume-1"
   const fork_supported = upstream.fork_params.length === 1 && forked_thread_id === "upstream-fork-1"
   const detached_review_supported = detached_review_thread_id === "upstream-review-1"
@@ -190,6 +206,8 @@ try {
     native_output_survived &&
     post_turn_ids_injected &&
     trigger_compaction_saw_prior_receipt &&
+    trigger_compaction_saw_context_reminder &&
+    pcodx_tool_visible_in_client &&
     resume_supported &&
     fork_supported &&
     detached_review_supported &&
@@ -219,6 +237,8 @@ try {
     native_output_survived,
     post_turn_ids_injected,
     trigger_compaction_saw_prior_receipt,
+    trigger_compaction_saw_context_reminder,
+    pcodx_tool_visible_in_client,
     resume_supported,
     fork_supported,
     detached_review_supported,
@@ -246,6 +266,7 @@ function startFakeUpstream(compaction: { from_message_id: string; to_message_id:
   const thread_start_params: unknown[] = []
   const turn_start_params: unknown[] = []
   const turn_start_receipt_seen: boolean[] = []
+  const turn_start_reminder_seen: boolean[] = []
   const injected_contexts: string[] = []
   const review_start_params: unknown[] = []
   const native_compact_start_params: unknown[] = []
@@ -315,6 +336,7 @@ function startFakeUpstream(compaction: { from_message_id: string; to_message_id:
           case "turn/start": {
             turn_start_params.push(msg.params)
             turn_start_receipt_seen.push(injected_contexts.some(context => context.includes("PCODX turn ledger ids")))
+            turn_start_reminder_seen.push(hasContextReminder(params))
             const thread_id = typeof params.threadId === "string" ? params.threadId : "missing-thread"
             const prompt = extractTurnPrompt(params)
             if (prompt.includes("Run an ordinary native command item")) {
@@ -365,6 +387,7 @@ function startFakeUpstream(compaction: { from_message_id: string; to_message_id:
     thread_start_params,
     turn_start_params,
     turn_start_receipt_seen,
+    turn_start_reminder_seen,
     injected_contexts,
     review_start_params,
     native_compact_start_params,
@@ -421,7 +444,34 @@ function sendNativeCommandItem(ws: { send(data: string): void }, thread_id: stri
 function sendTurnComplete(ws: { send(data: string): void }, request: JsonRpcMessage, thread_id: string, turn_n: number): void {
   ws.send(JSON.stringify({ method: "item/agentMessage/delta", params: { threadId: thread_id, delta: `assistant turn ${turn_n}` } }))
   ws.send(JSON.stringify({ method: "turn/completed", params: { threadId: thread_id, turn: { id: `turn-${turn_n}`, status: "completed" } } }))
+  ws.send(JSON.stringify({
+    method: "thread/tokenUsage/updated",
+    params: {
+      threadId: thread_id,
+      turnId: `turn-${turn_n}`,
+      tokenUsage: {
+        total: tokenUsageBreakdown(16_000 * turn_n),
+        last: tokenUsageBreakdown(16_000 * turn_n),
+        modelContextWindow: 100_000,
+      },
+    },
+  }))
   ws.send(JSON.stringify({ id: request.id, result: { turn: { id: `turn-${turn_n}`, status: "completed" } } }))
+}
+
+function tokenUsageBreakdown(input_tokens: number): Record<string, number> {
+  return {
+    totalTokens: input_tokens + 100,
+    inputTokens: input_tokens,
+    cachedInputTokens: 0,
+    outputTokens: 100,
+    reasoningOutputTokens: 0,
+  }
+}
+
+function hasContextReminder(params: Record<string, unknown>): boolean {
+  const additional_context = params.additionalContext
+  return isRecord(additional_context) && isRecord(additional_context["pcodx.context_window_reminder"])
 }
 
 function hasPcodxDynamicTools(params: unknown): boolean {
@@ -434,6 +484,7 @@ async function connectJsonRpc(url: string): Promise<JsonRpcClient> {
   const ws = new WebSocket(url)
   let next_id = 1
   const pending = new Map<RequestId, { resolve: (value: unknown) => void; reject: (err: Error) => void; method: string }>()
+  const notifications: JsonRpcMessage[] = []
   await new Promise<void>((resolvePromise, reject) => {
     const timer = setTimeout(() => reject(new Error(`timed out connecting to ${url}`)), 10000)
     ws.addEventListener("open", () => {
@@ -449,6 +500,10 @@ async function connectJsonRpc(url: string): Promise<JsonRpcClient> {
     const msg = parseJsonRpcMessage(event.data)
     if (isRequest(msg)) {
       ws.send(JSON.stringify({ id: msg.id, result: { decision: "decline" } }))
+      return
+    }
+    if (isNotification(msg)) {
+      notifications.push(msg)
       return
     }
     if (!isResponse(msg)) return
@@ -473,6 +528,7 @@ async function connectJsonRpc(url: string): Promise<JsonRpcClient> {
     close(): void {
       ws.close()
     },
+    notifications,
   }
 }
 
@@ -513,6 +569,10 @@ function isRequest(msg: JsonRpcMessage): msg is { id: RequestId; method: string;
 
 function isResponse(msg: JsonRpcMessage): msg is { id: RequestId; result?: unknown; error?: unknown } {
   return isRequestId(msg.id) && typeof msg.method !== "string"
+}
+
+function isNotification(msg: JsonRpcMessage): msg is { method: string; params: unknown } {
+  return !isRequestId(msg.id) && typeof msg.method === "string"
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

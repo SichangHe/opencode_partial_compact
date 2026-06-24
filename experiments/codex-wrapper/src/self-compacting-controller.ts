@@ -52,14 +52,15 @@ export type SelfCompactingControllerOptions = {
 
 const DEFAULT_SYSTEM_INSTRUCTIONS = [
   "You are Codex behind a PCODX self-compacting app-server controller.",
-  "Use message ids with partial_compact ranges when old recorded context can be replaced by faithful summaries.",
+  "Use visible `msg...` message ids or `cmp...` compacted-range ids with partial_compact ranges when old recorded context can be replaced by faithful summaries.",
+  "`cmp...` ids refer to already-compacted ranges and can be used as range endpoints when merging or replacing older summaries.",
   "The controller starts each future app-server turn from the compacted ledger render, so successful compaction reduces future model-visible context.",
 ].join("\n")
 
 const DYNAMIC_TOOLS = [
   {
     name: "partial_compact_current_session_message_ids",
-    description: "Return the currently visible PCODX ledger ids after controller-side compactions.",
+    description: "Return the currently visible PCODX ledger ids after controller-side compactions, including message ids and compacted-range ids.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -68,7 +69,7 @@ const DYNAMIC_TOOLS = [
   },
   {
     name: "partial_compact",
-    description: "Replace one or more disjoint ranges of prior PCODX ledger messages with faithful summaries for future app-server turns.",
+    description: "Replace one or more disjoint ranges of visible PCODX ledger ids with faithful summaries for future app-server turns. Range endpoints can be msg... message ids or cmp... compacted-range ids.",
     inputSchema: {
       type: "object",
       properties: {
@@ -116,9 +117,7 @@ export class SelfCompactingCodexController {
   }
 
   compactableMessageIds(): string[] {
-    return this.ledger.visibleEntries().flatMap(entry =>
-      entry.kind === "message" ? [entry.message.id] : [],
-    )
+    return this.ledger.currentVisibleMessageIds()
   }
 
   partialCompact(args: PartialCompactArgs): PartialCompactResult {
@@ -272,8 +271,9 @@ export class SelfCompactingCodexController {
           success: true,
           text: JSON.stringify({
             ok: true,
+            visible_ids: this.compactableMessageIds(),
             visible_message_ids: this.compactableMessageIds(),
-            visible_entry_ids: this.currentVisibleMessageIds(),
+            visible_entry_ids: this.compactableMessageIds(),
             future_model_visible_context_source: "pcodx app-server controller ledger render",
           }, null, 2),
       }
@@ -356,6 +356,7 @@ function compactionReceipt(
       n_messages_replaced: record.n_messages_replaced,
     })),
     future_model_context_rewritten_by_controller_on_next_turn: true,
+    visible_ids: visible_message_ids,
     visible_message_ids,
     visible_entry_ids,
   }
