@@ -56,6 +56,7 @@ async function main(argv: string[]): Promise<void> {
   const child_codex_home = resolve(lastFlag(parsed, "child-codex-home") ?? join(run_dir, "codex-home"))
   const source_codex_home = resolve(lastFlag(parsed, "source-codex-home") ?? process.env.CODEX_HOME ?? join(homedir(), ".codex"))
   const dry_run = parsed.flags.has("dry-run")
+  const selected_model = selectedModel(parsed)
   const child_setup = await prepareChildCodexSetup({
     child_codex_home,
     source_codex_home,
@@ -63,7 +64,7 @@ async function main(argv: string[]): Promise<void> {
     cwd,
     write_files: !dry_run,
   })
-  const codex_cmd = ["codex", "--remote", proxy_url, ...parsed.codex_args]
+  const codex_cmd = ["codex", "--remote", proxy_url, ...codexArgsWithModel(parsed.codex_args, selected_model)]
   const app_server_cmd = ["codex", "app-server", "--listen", upstream_url]
   if (dry_run) {
     printJson({
@@ -80,6 +81,7 @@ async function main(argv: string[]): Promise<void> {
       child_auth_strategy: child_setup.auth_strategy,
       child_config_values: child_setup.config_values,
       child_env: redactedChildEnv(child_setup.env),
+      selected_model,
       upstream_url,
       proxy_url,
       codex_frontend_command: shellCommand(codex_cmd),
@@ -109,6 +111,7 @@ async function main(argv: string[]): Promise<void> {
     process.stdout.write(`pcodx_proxy_url=${proxy.url}\n`)
     process.stdout.write(`pcodx_run_dir=${run_dir}\n`)
     process.stdout.write(`pcodx_child_codex_home=${child_setup.child_codex_home}\n`)
+    process.stdout.write(`pcodx_model=${selected_model ?? "source-config-or-codex-default"}\n`)
     const codex = spawn(codex_cmd[0] ?? "", codex_cmd.slice(1), {
       stdio: "inherit",
       cwd,
@@ -401,6 +404,25 @@ function lastFlag(parsed: ParsedArgs, key: string): string | undefined {
   return values?.[values.length - 1]
 }
 
+function selectedModel(parsed: ParsedArgs): string | null {
+  const model = lastFlag(parsed, "model") ?? process.env.PCODX_MODEL ?? null
+  if (model !== null && model.trim().length === 0) throw new Error("--model must be non-empty")
+  return model
+}
+
+function codexArgsWithModel(codex_args: string[], model: string | null): string[] {
+  if (model === null) return codex_args
+  if (hasCodexModelArg(codex_args)) throw new Error("pass the launch model with pcodx --model, not both pcodx --model and Codex --model/-m")
+  return ["--model", model, ...codex_args]
+}
+
+function hasCodexModelArg(args: string[]): boolean {
+  for (const arg of args) {
+    if (arg === "--model" || arg.startsWith("--model=") || arg === "-m" || (arg.startsWith("-m") && arg.length > 2)) return true
+  }
+  return false
+}
+
 function shellCommand(parts: string[]): string {
   return parts.map(shellQuote).join(" ")
 }
@@ -436,6 +458,7 @@ function printHelp(): void {
     "  --cwd <path>           Codex working directory",
     "  --child-codex-home <path>  child Codex home for spawned native UI and app-server",
     "  --source-codex-home <path> source Codex home to copy non-secret routing defaults from",
+    "  --model <model>        launch native Codex with this model; PCODX_MODEL is the env fallback",
     "  --proxy-port <port>    proxy listen port",
     "  --upstream-port <port> upstream app-server listen port",
     "  --dry-run              print commands without launching",

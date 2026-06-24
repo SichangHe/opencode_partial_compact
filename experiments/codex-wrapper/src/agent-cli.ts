@@ -25,6 +25,7 @@ const FLAG_HAS_VALUE = new Set([
   "run-root",
   "session-id",
   "child-codex-home",
+  "model",
   "source",
   "source-codex-home",
   "summary",

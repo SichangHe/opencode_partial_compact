@@ -75,7 +75,8 @@
   - wrapper receipts include `acceptance_scope=controller-owned app-server turns`
   - this wrapper does not implement stock Codex CLI transcript rewriting
 - Codex front-end proxy
-  - `bun run agent -- frontend -- --no-alt-screen`
+  - `bun run agent -- frontend --model gpt-5.5 -- --no-alt-screen`
+  - local-bin command after linking: `pcodx-native --model gpt-5.5 -- --no-alt-screen`
   - launches real Codex front-end with `codex --remote`
   - starts a real upstream `codex app-server`
   - both spawned Codex processes use a child `CODEX_HOME` under the run directory
@@ -87,7 +88,9 @@
   - `/review` remains native front-end behavior and reaches app-server `review/start`
   - native `/compact` remains native front-end behavior and reaches app-server `thread/compact/start`
   - PCODX partial compaction is exposed as dynamic app-server tools, not a redefined slash command
+  - `--model <model>` or `PCODX_MODEL=<model>` controls the native Codex launch model; explicit `--model` rejects an additional raw Codex `--model`/`-m`
   - ordinary completed Codex items such as command executions, file changes, MCP calls, and web search are recorded into the ledger on non-compacting turns
+  - after each completed non-compacting turn, the proxy injects a small PCODX turn ledger id receipt into the app-server thread so the next model turn sees reliable fresh `msg...` ids
   - after `partial_compact` succeeds, the proxy starts the next upstream turn on a fresh app-server thread
   - the fresh upstream thread is seeded with only the compacted `WrapperLedger` render
   - `thread/resume` and `thread/fork` are registered and can continue through the proxy

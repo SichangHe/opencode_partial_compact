@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+self=$(readlink -f "${BASH_SOURCE[0]}")
+root=$(cd -- "$(dirname -- "$(dirname -- "$self")")" && pwd)
+exec bun run "$root/src/agent-cli.ts" frontend "$@"

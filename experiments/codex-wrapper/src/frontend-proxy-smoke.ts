@@ -21,6 +21,7 @@ type FakeUpstream = {
   stop(): void
   thread_start_params: unknown[]
   turn_start_params: unknown[]
+  turn_start_receipt_seen: boolean[]
   injected_contexts: string[]
   review_start_params: unknown[]
   native_compact_start_params: unknown[]
@@ -158,6 +159,14 @@ try {
   const second_has_raw = second_context.includes("PCODX_FRONTEND_PROXY_RAW_SENTINEL_A") || second_context.includes("PCODX_FRONTEND_PROXY_RAW_SENTINEL_B")
   const second_has_summary = second_context.includes(SUMMARY)
   const native_output_survived = second_context.includes(NATIVE_OUTPUT)
+  const post_turn_ids_injected = upstream.injected_contexts.some(context =>
+    context.includes("PCODX turn ledger ids") &&
+    context.includes("user=msg000003") &&
+    context.includes("tool=msg000004") &&
+    context.includes("assistant=msg000005") &&
+    context.includes("Visible compactable message ids"))
+  const trigger_compaction_turn_idx = upstream.turn_start_params.findIndex(params => isRecord(params) && extractTurnPrompt(params).includes("Trigger PCODX partial compaction."))
+  const trigger_compaction_saw_prior_receipt = trigger_compaction_turn_idx >= 0 && upstream.turn_start_receipt_seen[trigger_compaction_turn_idx] === true
   const resume_supported = upstream.resume_params.length === 1 && resumed_thread_id === "upstream-resume-1"
   const fork_supported = upstream.fork_params.length === 1 && forked_thread_id === "upstream-fork-1"
   const detached_review_supported = detached_review_thread_id === "upstream-review-1"
@@ -179,6 +188,8 @@ try {
     !second_has_raw &&
     second_has_summary &&
     native_output_survived &&
+    post_turn_ids_injected &&
+    trigger_compaction_saw_prior_receipt &&
     resume_supported &&
     fork_supported &&
     detached_review_supported &&
@@ -206,6 +217,8 @@ try {
     raw_sentinel_in_second_context: second_has_raw,
     summary_in_second_context: second_has_summary,
     native_output_survived,
+    post_turn_ids_injected,
+    trigger_compaction_saw_prior_receipt,
     resume_supported,
     fork_supported,
     detached_review_supported,
@@ -232,6 +245,7 @@ function startFakeUpstream(compaction: { from_message_id: string; to_message_id:
   let next_turn_n = 1
   const thread_start_params: unknown[] = []
   const turn_start_params: unknown[] = []
+  const turn_start_receipt_seen: boolean[] = []
   const injected_contexts: string[] = []
   const review_start_params: unknown[] = []
   const native_compact_start_params: unknown[] = []
@@ -300,6 +314,7 @@ function startFakeUpstream(compaction: { from_message_id: string; to_message_id:
             return
           case "turn/start": {
             turn_start_params.push(msg.params)
+            turn_start_receipt_seen.push(injected_contexts.some(context => context.includes("PCODX turn ledger ids")))
             const thread_id = typeof params.threadId === "string" ? params.threadId : "missing-thread"
             const prompt = extractTurnPrompt(params)
             if (prompt.includes("Run an ordinary native command item")) {
@@ -349,6 +364,7 @@ function startFakeUpstream(compaction: { from_message_id: string; to_message_id:
     },
     thread_start_params,
     turn_start_params,
+    turn_start_receipt_seen,
     injected_contexts,
     review_start_params,
     native_compact_start_params,

@@ -51,6 +51,7 @@ type ThreadState = {
   context_injected_upstream_id: string | null
   needs_fresh_upstream: boolean
   current_turn: TurnState | null
+  pending_turn_receipt: Promise<void> | null
 }
 
 type LedgerState = {
@@ -80,7 +81,8 @@ export const FRONTEND_ACCEPTANCE_SCOPE_TEXT = `acceptance_scope=${FRONTEND_ACCEP
 
 const PCODX_DEVELOPER_INSTRUCTIONS = [
   "PCODX partial compaction is available in this Codex front-end session through dynamic tools.",
-  "Use `partial_compact_current_session_message_ids` to inspect compactable `msg...` ids.",
+  "The proxy injects a small PCODX turn ledger id receipt after each completed non-compacting turn.",
+  "Use those visible `msg...` ids in `partial_compact` ranges; call `partial_compact_current_session_message_ids` if you need to refresh the current compactable id list.",
   "Use `partial_compact` to replace stale ledger ranges with faithful summaries.",
   "After a successful PCODX compaction, the proxy starts the next upstream app-server turn from a fresh thread seeded only with the compacted ledger render.",
 ].join("\n")
@@ -255,6 +257,7 @@ class FrontendProxyConnection {
   async #prepareTurnStart(params: unknown): Promise<ThreadState> {
     const thread = this.#threadFromParams(params)
     if (!thread) throw new Error("turn/start omitted a known threadId")
+    await this.#awaitPendingTurnReceipt(thread)
     if (thread.needs_fresh_upstream) await this.#startFreshUpstreamThread(thread)
     if (this.#ledger_state.ledger.visibleEntries().length > 0 && thread.context_injected_upstream_id !== thread.upstream_thread_id) {
       await this.#injectCurrentContext(thread)
@@ -265,6 +268,7 @@ class FrontendProxyConnection {
   async #prepareReviewStart(params: unknown): Promise<ThreadState> {
     const thread = this.#threadFromParams(params)
     if (!thread) throw new Error("review/start omitted a known threadId")
+    await this.#awaitPendingTurnReceipt(thread)
     if (thread.needs_fresh_upstream) await this.#startFreshUpstreamThread(thread)
     if (this.#ledger_state.ledger.visibleEntries().length > 0 && thread.context_injected_upstream_id !== thread.upstream_thread_id) {
       await this.#injectCurrentContext(thread)
@@ -283,7 +287,12 @@ class FrontendProxyConnection {
     thread.context_injected_upstream_id = null
     thread.needs_fresh_upstream = false
     thread.current_turn = null
+    thread.pending_turn_receipt = null
     this.#threads_by_upstream_id.set(upstream_thread_id, thread)
+  }
+
+  async #awaitPendingTurnReceipt(thread: ThreadState): Promise<void> {
+    if (thread.pending_turn_receipt !== null) await thread.pending_turn_receipt
   }
 
   async #injectCurrentContext(thread: ThreadState): Promise<void> {
@@ -395,6 +404,7 @@ class FrontendProxyConnection {
       context_injected_upstream_id: null,
       needs_fresh_upstream: false,
       current_turn: null,
+      pending_turn_receipt: null,
     }
     this.#threads_by_client_id.set(thread.client_thread_id, thread)
     this.#threads_by_upstream_id.set(thread.upstream_thread_id, thread)
@@ -421,27 +431,64 @@ class FrontendProxyConnection {
   async #completeTurn(thread: ThreadState): Promise<void> {
     const turn = thread.current_turn
     if (!turn) return
+    const recorded_ids: string[] = []
     if (turn.compacted) {
       for (const text of turn.tool_transcripts) {
-        this.#ledger_state.ledger.append("tool", text, "frontend-proxy:tool")
+        const msg = this.#ledger_state.ledger.append("tool", text, "frontend-proxy:tool")
+        recorded_ids.push(`${msg.role}=${msg.id}`)
       }
-      this.#ledger_state.ledger.append(
+      const msg = this.#ledger_state.ledger.append(
         "assistant",
         "PCODX front-end proxy omitted the current turn prompt and assistant text from future ledger state after compaction so raw pre-compaction context is not reintroduced.",
         "frontend-proxy:post-compact",
       )
+      recorded_ids.push(`${msg.role}=${msg.id}`)
     } else {
-      if (turn.user_text.trim()) this.#ledger_state.ledger.append("user", turn.user_text, "frontend-proxy:user")
+      if (turn.user_text.trim()) {
+        const msg = this.#ledger_state.ledger.append("user", turn.user_text, "frontend-proxy:user")
+        recorded_ids.push(`${msg.role}=${msg.id}`)
+      }
       for (const text of turn.completed_item_transcripts) {
-        this.#ledger_state.ledger.append("tool", text, "frontend-proxy:item")
+        const msg = this.#ledger_state.ledger.append("tool", text, "frontend-proxy:item")
+        recorded_ids.push(`${msg.role}=${msg.id}`)
       }
       for (const text of turn.tool_transcripts) {
-        this.#ledger_state.ledger.append("tool", text, "frontend-proxy:tool")
+        const msg = this.#ledger_state.ledger.append("tool", text, "frontend-proxy:tool")
+        recorded_ids.push(`${msg.role}=${msg.id}`)
       }
-      this.#ledger_state.ledger.append("assistant", turn.assistant_text.trim() || "(empty assistant response)", "frontend-proxy:assistant")
+      const msg = this.#ledger_state.ledger.append("assistant", turn.assistant_text.trim() || "(empty assistant response)", "frontend-proxy:assistant")
+      recorded_ids.push(`${msg.role}=${msg.id}`)
     }
     thread.current_turn = null
+    const receipt = this.#saveTurnAndMaybeInjectReceipt(thread, turn.compacted, recorded_ids)
+    thread.pending_turn_receipt = receipt
+    try {
+      await receipt
+    } finally {
+      if (thread.pending_turn_receipt === receipt) thread.pending_turn_receipt = null
+    }
+  }
+
+  async #saveTurnAndMaybeInjectReceipt(thread: ThreadState, compacted: boolean, recorded_ids: string[]): Promise<void> {
     await saveLedgerState(this.#ledger_state)
+    if (!compacted && recorded_ids.length > 0) await this.#injectTurnIdReceipt(thread, recorded_ids)
+  }
+
+  async #injectTurnIdReceipt(thread: ThreadState, recorded_ids: string[]): Promise<void> {
+    const text = [
+      "PCODX turn ledger ids:",
+      ...recorded_ids.map(id => `- ${id}`),
+      `Visible compactable message ids: ${compactableMessageIds(this.#ledger_state.ledger).join(", ") || "(none)"}`,
+      "Use these exact ids in `partial_compact` ranges when compacting this session.",
+    ].join("\n")
+    await this.#requestUpstream("thread/inject_items", {
+      threadId: thread.upstream_thread_id,
+      items: [{
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text }],
+      }],
+    })
   }
 
   async #handlePcodxToolCall(params: Record<string, unknown>): Promise<unknown> {
