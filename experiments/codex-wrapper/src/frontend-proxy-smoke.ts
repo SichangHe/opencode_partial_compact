@@ -19,6 +19,7 @@ type JsonRpcMessage = {
 type FakeUpstream = {
   url: string
   stop(): void
+  event_log: string[]
   thread_start_params: unknown[]
   turn_start_params: unknown[]
   turn_start_receipt_seen: boolean[]
@@ -200,6 +201,15 @@ try {
     isRecord(params) &&
     params.threadId !== "upstream-thread-1" &&
     compacted_contexts.length >= 1)
+  const append_only_reconstruction = appendOnlyReconstruction(upstream.event_log)
+  const context_insertions_or_mutations = contextInsertionsOrMutations(upstream.event_log)
+  const reconstructed_context_appends = reconstructedContextAppends(upstream.event_log)
+  const raw_reconstructed_contexts = contextsAfterFirstReconstruction(upstream.injected_contexts).filter(hasRawSentinel)
+  const reconstructed_context_appended_to_parent = reconstructed_context_appends.some(event => event.includes("upstream-thread-3"))
+  const reconstructed_context_appended_to_secondary = reconstructed_context_appends.some(event => event.includes("upstream-thread-4"))
+  const reconstructed_context_appended_to_resume = reconstructed_context_appends.some(event => event.includes("upstream-resume-1"))
+  const reconstructed_context_appended_to_fork = reconstructed_context_appends.some(event => event.includes("upstream-fork-1"))
+  const reconstructed_context_appended_to_review = reconstructed_context_appends.some(event => event.includes("upstream-review-1"))
   const shrink_chars = first_context.length - second_context.length
   const ok = review_forwarded &&
     native_compact_forwarded &&
@@ -222,6 +232,13 @@ try {
     parent_turn_after_inline_review_supported &&
     all_thread_contexts_invalidated &&
     review_start_refreshed_context &&
+    append_only_reconstruction &&
+    raw_reconstructed_contexts.length === 0 &&
+    reconstructed_context_appended_to_parent &&
+    reconstructed_context_appended_to_secondary &&
+    reconstructed_context_appended_to_resume &&
+    reconstructed_context_appended_to_fork &&
+    reconstructed_context_appended_to_review &&
     upstream.thread_start_params.length >= 2 &&
     shrink_chars > 0 &&
     parseReviewThreadId(review_result) === client_thread_id &&
@@ -257,9 +274,20 @@ try {
     all_thread_contexts_invalidated,
     review_start_refreshed_context,
     pcodx_tool_response_count: upstream.pcodx_tool_responses.length,
+    append_only_reconstruction,
+    context_insertions_or_mutations,
+    reconstructed_context_appends,
+    raw_reconstructed_context_count: raw_reconstructed_contexts.length,
+    reconstructed_context_appended_to_parent,
+    reconstructed_context_appended_to_secondary,
+    reconstructed_context_appended_to_resume,
+    reconstructed_context_appended_to_fork,
+    reconstructed_context_appended_to_review,
     first_injected_context_path: first_context_path,
     second_injected_context_path: second_context_path,
+    transcript_path: join(RUN_DIR, "conversation-transcript.txt"),
   }
+  await writeFile(report.transcript_path, renderTranscript(upstream.event_log, report), "utf8")
   await writeFile(join(RUN_DIR, "result.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8")
   console.log(JSON.stringify(report, null, 2))
   if (!ok) process.exitCode = 1
@@ -283,6 +311,7 @@ function startFakeUpstream(compaction: { from_message_id: string; to_message_id:
   const resume_params: unknown[] = []
   const fork_params: unknown[] = []
   const pcodx_tool_responses: unknown[] = []
+  const event_log: string[] = []
   const pending_tool_turns = new Map<RequestId, { request: JsonRpcMessage; thread_id: string }>()
   const thread_start_params_by_id = new Map<string, unknown>()
   const server = Bun.serve({
@@ -313,6 +342,7 @@ function startFakeUpstream(compaction: { from_message_id: string; to_message_id:
           case "thread/start": {
             const thread_id = `upstream-thread-${next_thread_n}`
             next_thread_n += 1
+            event_log.push(`thread/start ${thread_id}`)
             thread_start_params.push(msg.params)
             thread_start_params_by_id.set(thread_id, msg.params)
             ws.send(JSON.stringify({ method: "thread/started", params: { thread: { id: thread_id } } }))
@@ -320,30 +350,37 @@ function startFakeUpstream(compaction: { from_message_id: string; to_message_id:
             return
           }
           case "thread/resume":
+            event_log.push("thread/resume upstream-resume-1")
             resume_params.push(msg.params)
             ws.send(JSON.stringify({ id: msg.id, result: threadLifecycleResponse("upstream-resume-1") }))
             return
           case "thread/fork":
+            event_log.push("thread/fork upstream-fork-1")
             fork_params.push(msg.params)
             ws.send(JSON.stringify({ id: msg.id, result: threadLifecycleResponse("upstream-fork-1") }))
             return
           case "thread/inject_items":
+            event_log.push(`thread/inject_items ${String(params.threadId ?? "missing-thread")} ${classifyInjectedContext(extractInjectedContext(params))}`)
             injected_contexts.push(extractInjectedContext(params))
             ws.send(JSON.stringify({ id: msg.id, result: {} }))
             return
           case "review/start":
+            event_log.push(`review/start ${String(params.threadId ?? "missing-thread")}`)
             review_start_params.push(msg.params)
             if (params.delivery === "detached") {
+              event_log.push("review/thread upstream-review-1")
               ws.send(JSON.stringify({ id: msg.id, result: { reviewThreadId: "upstream-review-1", turn: { id: "review-turn", status: "completed" } } }))
             } else {
               ws.send(JSON.stringify({ id: msg.id, result: { reviewThreadId: params.threadId, turn: { id: "review-turn", status: "completed" } } }))
             }
             return
           case "thread/compact/start":
+            event_log.push(`thread/compact/start ${String(params.threadId ?? "missing-thread")}`)
             native_compact_start_params.push(msg.params)
             ws.send(JSON.stringify({ id: msg.id, result: {} }))
             return
           case "turn/start": {
+            event_log.push(`turn/start ${String(params.threadId ?? "missing-thread")} ${extractTurnPrompt(params)}`)
             turn_start_params.push(msg.params)
             turn_start_receipt_seen.push(injected_contexts.some(context => context.includes("PCODX turn ledger ids")))
             turn_start_reminder_seen.push(hasContextReminder(params))
@@ -394,6 +431,7 @@ function startFakeUpstream(compaction: { from_message_id: string; to_message_id:
     stop() {
       server.stop(true)
     },
+    event_log,
     thread_start_params,
     turn_start_params,
     turn_start_receipt_seen,
@@ -549,6 +587,93 @@ function extractInjectedContext(params: Record<string, unknown>): string {
     if (!isRecord(item) || !Array.isArray(item.content)) return []
     return item.content.flatMap(part => isRecord(part) && typeof part.text === "string" ? [part.text] : [])
   }).join("\n")
+}
+
+function classifyInjectedContext(context: string): string {
+  if (context.includes(SUMMARY) && hasRawSentinel(context)) return "mutated-compacted-ledger-render"
+  if (context.includes(SUMMARY)) return "compacted-ledger-render"
+  if (hasRawSentinel(context)) return "raw-ledger-render"
+  return "unknown-context"
+}
+
+function hasRawSentinel(context: string): boolean {
+  return context.includes("PCODX_FRONTEND_PROXY_RAW_SENTINEL_A") || context.includes("PCODX_FRONTEND_PROXY_RAW_SENTINEL_B")
+}
+
+function contextsAfterFirstReconstruction(contexts: string[]): string[] {
+  const first_idx = contexts.findIndex(context => context.includes(SUMMARY))
+  return first_idx === -1 ? [] : contexts.slice(first_idx)
+}
+
+function appendOnlyReconstruction(event_log: string[]): boolean {
+  return contextInsertionsOrMutations(event_log).length === 0
+}
+
+function contextInsertionsOrMutations(event_log: string[]): string[] {
+  const started_threads = new Set<string>()
+  const threads_with_turns = new Set<string>()
+  const violations: string[] = []
+  for (const event of event_log) {
+    const thread_id = eventThreadId(event)
+    if (!thread_id) continue
+    if (isThreadLifecycleEvent(event)) started_threads.add(thread_id)
+    if (event.startsWith("thread/inject_items ")) {
+      if (!started_threads.has(thread_id) || threads_with_turns.has(thread_id)) violations.push(event)
+    }
+    if (event.startsWith("turn/start ")) threads_with_turns.add(thread_id)
+  }
+  return violations
+}
+
+function reconstructedContextAppends(event_log: string[]): string[] {
+  return event_log.filter(event => event.startsWith("thread/inject_items ") && event.includes("compacted-ledger-render"))
+}
+
+function eventThreadId(event: string): string | null {
+  const parts = event.split(" ")
+  if (
+    event.startsWith("thread/start ") ||
+    event.startsWith("thread/resume ") ||
+    event.startsWith("thread/fork ") ||
+    event.startsWith("review/start ") ||
+    event.startsWith("review/thread ") ||
+    event.startsWith("thread/inject_items ") ||
+    event.startsWith("turn/start ")
+  ) return parts[1] ?? null
+  return null
+}
+
+function isThreadLifecycleEvent(event: string): boolean {
+  return event.startsWith("thread/start ") ||
+    event.startsWith("thread/resume ") ||
+    event.startsWith("thread/fork ") ||
+    event.startsWith("review/start ") ||
+    event.startsWith("review/thread ")
+}
+
+function renderTranscript(event_log: string[], report: Record<string, unknown>): string {
+  return [
+    "pcodx frontend proxy append-only resume demonstration",
+    "",
+    "conversation-shaped upstream transcript:",
+    ...event_log.map((event, idx) => `${idx + 1}. ${event}`),
+    "",
+    `append_only_reconstruction=${String(report.append_only_reconstruction)}`,
+    `context_insertions_or_mutations=${JSON.stringify(report.context_insertions_or_mutations)}`,
+    `reconstructed_context_appends=${JSON.stringify(report.reconstructed_context_appends)}`,
+    `raw_reconstructed_context_count=${String(report.raw_reconstructed_context_count)}`,
+    `reconstructed_context_appended_to_parent=${String(report.reconstructed_context_appended_to_parent)}`,
+    `reconstructed_context_appended_to_secondary=${String(report.reconstructed_context_appended_to_secondary)}`,
+    `reconstructed_context_appended_to_resume=${String(report.reconstructed_context_appended_to_resume)}`,
+    `reconstructed_context_appended_to_fork=${String(report.reconstructed_context_appended_to_fork)}`,
+    `reconstructed_context_appended_to_review=${String(report.reconstructed_context_appended_to_review)}`,
+    `raw_sentinel_in_first_context=${String(report.raw_sentinel_in_first_context)}`,
+    `raw_sentinel_in_second_context=${String(report.raw_sentinel_in_second_context)}`,
+    `summary_in_second_context=${String(report.summary_in_second_context)}`,
+    `resume_supported=${String(report.resume_supported)}`,
+    `fork_supported=${String(report.fork_supported)}`,
+    "",
+  ].join("\n")
 }
 
 function extractTurnPrompt(params: Record<string, unknown>): string {
