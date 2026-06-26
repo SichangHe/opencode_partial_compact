@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 import { spawn } from "node:child_process"
+import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
-import { lstat, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises"
+import { lstat, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises"
 import { createConnection, createServer } from "node:net"
 import { homedir } from "node:os"
-import { basename, dirname, join, relative, resolve, sep } from "node:path"
-import { fileURLToPath } from "node:url"
-import { startPcodxFrontendProxy, FRONTEND_ACCEPTANCE_SCOPE, FRONTEND_ACCEPTANCE_SCOPE_TEXT } from "./frontend-proxy.js"
+import { basename, join, relative, resolve, sep } from "node:path"
+import { startPcodxFrontendProxy, FRONTEND_ACCEPTANCE_SCOPE, FRONTEND_ACCEPTANCE_SCOPE_TEXT, type PcodxFrontendProxyServer } from "./frontend-proxy.js"
 
 type ParsedArgs = {
   flags: Map<string, string[]>
@@ -23,10 +23,10 @@ type ChildCodexSetup = {
   env: NodeJS.ProcessEnv
 }
 
-const DEFAULT_RUN_DIR = "."
 const DEFAULT_PROXY_API_KEY = "cligate-local-proxy"
-const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
+const STATE_RETENTION_DAYS = 14
 const CHILD_AUTH_MARKER = "pcodx-frontend-proxy"
+let n_default_run_dirs = 0
 const AUTH_ENV_KEYS = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_ACCESS_TOKEN"]
 const SAFE_TOP_LEVEL_CONFIG_KEYS = [
   "model",
@@ -47,16 +47,18 @@ async function main(argv: string[]): Promise<void> {
     printHelp()
     return
   }
-  const run_dir = resolve(lastFlag(parsed, "run-dir") ?? DEFAULT_RUN_DIR)
-  const session_id = lastFlag(parsed, "session-id") ?? defaultSessionId(run_dir)
   const cwd = resolve(lastFlag(parsed, "cwd") ?? process.cwd())
+  const explicit_run_dir = lastFlag(parsed, "run-dir")
+  const dry_run = parsed.flags.has("dry-run")
+  const run_dir = resolve(explicit_run_dir ?? await defaultRunDirForLaunch(cwd, parsed.codex_args))
+  const session_id = lastFlag(parsed, "session-id") ?? defaultSessionId(run_dir)
+  if (!dry_run) await cleanupOldStateRuns(run_dir)
   const proxy_port = await choosePort(parsed, "proxy-port")
   const upstream_port = await choosePort(parsed, "upstream-port")
   const proxy_url = `ws://127.0.0.1:${proxy_port}`
   const upstream_url = `ws://127.0.0.1:${upstream_port}`
   const child_codex_home = resolve(lastFlag(parsed, "child-codex-home") ?? join(run_dir, "codex-home"))
   const source_codex_home = resolve(lastFlag(parsed, "source-codex-home") ?? process.env.CODEX_HOME ?? join(homedir(), ".codex"))
-  const dry_run = parsed.flags.has("dry-run")
   const selected_model = selectedModel(parsed)
   const pcodx_resume_command = resumeCommand({ run_dir, cwd, session_id })
   const child_setup = await prepareChildCodexSetup({
@@ -101,9 +103,10 @@ async function main(argv: string[]): Promise<void> {
   })
   app_server.stderr.on("data", chunk => process.stderr.write(String(chunk)))
   app_server.stdout.on("data", chunk => process.stderr.write(String(chunk)))
+  let proxy: PcodxFrontendProxyServer | null = null
   try {
     await waitForPort("127.0.0.1", upstream_port, 10000)
-    const proxy = await startPcodxFrontendProxy({
+    proxy = await startPcodxFrontendProxy({
       upstream_url,
       run_dir,
       session_id,
@@ -123,12 +126,12 @@ async function main(argv: string[]): Promise<void> {
       env: child_setup.env,
     })
     const status = await waitForExit(codex)
-    proxy.stop()
     process.stdout.write(`pcodx_session_id=${session_id}\n`)
     process.stdout.write(`pcodx_resume_command=${pcodx_resume_command}\n`)
     process.exitCode = status
   } finally {
-    app_server.kill("SIGTERM")
+    proxy?.stop()
+    await terminateProcess(app_server)
   }
 }
 
@@ -406,6 +409,17 @@ async function waitForExit(proc: ReturnType<typeof spawn>): Promise<number> {
   })
 }
 
+async function terminateProcess(proc: ReturnType<typeof spawn>): Promise<void> {
+  if (proc.exitCode !== null || proc.signalCode !== null) return
+  const exited = new Promise<true>(resolvePromise => proc.once("exit", () => resolvePromise(true)))
+  proc.kill("SIGTERM")
+  const timed_out = new Promise<false>(resolvePromise => setTimeout(() => resolvePromise(false), 2000))
+  if (!await Promise.race([exited, timed_out]) && proc.exitCode === null && proc.signalCode === null) {
+    proc.kill("SIGKILL")
+    await Promise.race([exited, new Promise(resolvePromise => setTimeout(resolvePromise, 1000))])
+  }
+}
+
 function lastFlag(parsed: ParsedArgs, key: string): string | undefined {
   const values = parsed.flags.get(key)
   return values?.[values.length - 1]
@@ -434,9 +448,18 @@ function shellCommand(parts: string[]): string {
   return parts.map(shellQuote).join(" ")
 }
 
+function envAssignment(key: string, value: string): string {
+  return `${key}=${shellQuote(value)}`
+}
+
 function shellQuote(value: string): string {
   if (/^[A-Za-z0-9_./:=@%+-]+$/.test(value)) return value
   return `'${value.replaceAll("'", "'\\''")}'`
+}
+
+function containsPath(parent: string, child: string): boolean {
+  const rel = relative(resolve(parent), resolve(child))
+  return rel === "" || (!rel.startsWith("..") && rel !== ".." && !rel.startsWith(`..${sep}`))
 }
 
 function isMissingFileError(err: unknown): boolean {
@@ -460,7 +483,7 @@ function printHelp(): void {
     "  bun run frontend -- --dry-run -- --model gpt-5.5",
     "",
     "pcodx flags:",
-    `  --run-dir <path>       default ${DEFAULT_RUN_DIR}`,
+    "  --run-dir <path>       default $XDG_STATE_HOME/pcodx/runs/<date>/<cwd>-<hash>-<stamp>",
     "  --session-id <id>      default derived from the run directory name",
     "  --cwd <path>           Codex working directory",
     "  --child-codex-home <path>  child Codex home for spawned native UI and app-server",
@@ -478,24 +501,74 @@ function defaultSessionId(run_dir: string): string {
   return label.length > 0 ? label : "pcodx"
 }
 
-function resumeCommand(input: { run_dir: string; cwd: string; session_id: string }): string {
-  if (input.session_id === defaultSessionId(input.run_dir)) {
-    return shellCommand(["pcodx", "resume", "--last"])
+async function defaultRunDirForLaunch(cwd: string, codex_args: string[]): Promise<string> {
+  if (codex_args[0] === "resume") return await latestRunDir(cwd) ?? defaultRunDir(cwd)
+  return defaultRunDir(cwd)
+}
+
+function defaultRunDir(cwd: string): string {
+  const safe_label = basename(cwd).replace(/[^A-Za-z0-9_.-]+/g, "-") || "cwd"
+  const hash = createHash("sha256").update(cwd).digest("hex").slice(0, 12)
+  n_default_run_dirs += 1
+  const stamp = `${new Date().toISOString().replaceAll(/[-:.]/g, "").slice(0, 18)}-${process.pid}-${n_default_run_dirs}`
+  return join(stateRoot(), "runs", new Date().toISOString().slice(0, 10), `${safe_label}-${hash}-${stamp}`)
+}
+
+function stateRoot(): string {
+  return resolve(process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"), "pcodx")
+}
+
+async function latestRunDir(cwd: string): Promise<string | null> {
+  const safe_label = basename(cwd).replace(/[^A-Za-z0-9_.-]+/g, "-") || "cwd"
+  const hash = createHash("sha256").update(cwd).digest("hex").slice(0, 12)
+  const prefix = `${safe_label}-${hash}`
+  const runs_dir = join(stateRoot(), "runs")
+  const date_entries = await readdir(runs_dir, { withFileTypes: true }).catch((err: unknown) => {
+    if (isMissingFileError(err)) return []
+    throw err
+  })
+  const candidates: Array<{ path: string; mtime_ms: number }> = []
+  for (const date_entry of date_entries) {
+    if (!date_entry.isDirectory() || !/^\d{4}-\d{2}-\d{2}$/.test(date_entry.name)) continue
+    const date_dir = join(runs_dir, date_entry.name)
+    const run_entries = await readdir(date_dir, { withFileTypes: true }).catch((err: unknown) => {
+      if (isMissingFileError(err)) return []
+      throw err
+    })
+    for (const run_entry of run_entries) {
+      if (!run_entry.isDirectory() || (run_entry.name !== prefix && !run_entry.name.startsWith(`${prefix}-`))) continue
+      const path = join(date_dir, run_entry.name)
+      candidates.push({ path, mtime_ms: (await stat(path)).mtimeMs })
+    }
   }
-  return shellCommand([
-    "bun",
-    "run",
-    join(ROOT, "src", "frontend-cli.ts"),
-    "--run-dir",
-    input.run_dir,
-    "--cwd",
-    input.cwd,
-    "--session-id",
-    input.session_id,
-    "--",
-    "resume",
-    "--last",
-  ])
+  candidates.sort((a, b) => b.mtime_ms - a.mtime_ms || b.path.localeCompare(a.path))
+  return candidates[0]?.path ?? null
+}
+
+async function cleanupOldStateRuns(active_run_dir: string): Promise<void> {
+  const runs_dir = join(stateRoot(), "runs")
+  const entries = await readdir(runs_dir, { withFileTypes: true }).catch((err: unknown) => {
+    if (isMissingFileError(err)) return []
+    throw err
+  })
+  const cutoff_ms = Date.now() - STATE_RETENTION_DAYS * 24 * 60 * 60 * 1000
+  const active = resolve(active_run_dir)
+  await Promise.all(entries
+    .filter(entry => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(entry.name))
+    .map(async entry => {
+      const path = join(runs_dir, entry.name)
+      if (containsPath(path, active)) return
+      const info = await stat(path)
+      if (info.mtimeMs < cutoff_ms) await rm(path, { recursive: true, force: true })
+    }))
+}
+
+function resumeCommand(input: { run_dir: string; cwd: string; session_id: string }): string {
+  const env = [
+    envAssignment("PCODX_RUN_DIR", input.run_dir),
+    ...(input.session_id === defaultSessionId(input.run_dir) ? [] : [envAssignment("PCODX_SESSION_ID", input.session_id)]),
+  ].join(" ")
+  return `cd ${shellQuote(input.cwd)} && ${env} pcodx resume --last`
 }
 
 main(process.argv.slice(2)).catch(err => {

@@ -161,15 +161,17 @@ try {
   const second_has_raw = second_context.includes("PCODX_FRONTEND_PROXY_RAW_SENTINEL_A") || second_context.includes("PCODX_FRONTEND_PROXY_RAW_SENTINEL_B")
   const second_has_summary = second_context.includes(SUMMARY)
   const native_output_survived = second_context.includes(NATIVE_OUTPUT)
-  const post_turn_ids_injected = upstream.injected_contexts.some(context =>
-    context.includes("PCODX turn ledger ids") &&
-    context.includes("user=msg000003") &&
-    context.includes("tool=msg000004") &&
-    context.includes("assistant=msg000005") &&
-    context.includes("Visible pcodx ids"))
+  const post_turn_ids_injected = upstream.injected_contexts.some(context => context.includes("PCODX turn ledger ids"))
   const trigger_compaction_turn_idx = upstream.turn_start_params.findIndex(params => isRecord(params) && extractTurnPrompt(params).includes("Trigger PCODX partial compaction."))
   const trigger_compaction_saw_prior_receipt = trigger_compaction_turn_idx >= 0 && upstream.turn_start_receipt_seen[trigger_compaction_turn_idx] === true
   const trigger_compaction_saw_context_reminder = trigger_compaction_turn_idx >= 0 && upstream.turn_start_reminder_seen[trigger_compaction_turn_idx] === true
+  const pcodx_tool_running_in_client = client.notifications.some(msg =>
+    msg.method === "item/completed" &&
+    isRecord(msg.params) &&
+    isRecord(msg.params.item) &&
+    msg.params.item.type === "dynamicToolCall" &&
+    msg.params.item.tool === "partial_compact" &&
+    msg.params.item.status === "running")
   const pcodx_tool_visible_in_client = client.notifications.some(msg =>
     msg.method === "item/completed" &&
     isRecord(msg.params) &&
@@ -206,9 +208,10 @@ try {
     !second_has_raw &&
     second_has_summary &&
     native_output_survived &&
-    post_turn_ids_injected &&
-    trigger_compaction_saw_prior_receipt &&
+    !post_turn_ids_injected &&
+    !trigger_compaction_saw_prior_receipt &&
     trigger_compaction_saw_context_reminder &&
+    pcodx_tool_running_in_client &&
     pcodx_tool_visible_in_client &&
     resume_supported &&
     fork_supported &&
@@ -242,6 +245,7 @@ try {
     post_turn_ids_injected,
     trigger_compaction_saw_prior_receipt,
     trigger_compaction_saw_context_reminder,
+    pcodx_tool_running_in_client,
     pcodx_tool_visible_in_client,
     resume_supported,
     fork_supported,

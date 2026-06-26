@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { ContextWindowReminderTracker } from "./app-server-adapter.js"
 import { WrapperLedger } from "./ledger.js"
+import { loadSharedPrompt, renderSharedPrompt } from "./shared-prompts.js"
 import type { PartialCompactRange } from "./types.js"
 
 type RequestId = string | number
@@ -88,18 +89,28 @@ export const FRONTEND_ACCEPTANCE_SCOPE_TEXT = `acceptance_scope=${FRONTEND_ACCEP
 
 const PCODX_DEVELOPER_INSTRUCTIONS = [
   "PCODX partial compaction is available in this Codex front-end session through dynamic tools.",
-  "The proxy injects a small PCODX turn ledger id receipt after each completed non-compacting turn.",
+  loadSharedPrompt("partial-compact-instruction.md"),
   "Use visible `msg...` message ids or `cmp...` compacted-range ids in `partial_compact` ranges; call `partial_compact_current_session_message_ids` if you need to refresh the current visible id list.",
   "`cmp...` ids refer to already-compacted ranges and can be used as range endpoints when merging or replacing older summaries.",
-  "Use `partial_compact` to replace stale ledger ranges with faithful summaries.",
-  "When a pcodx context-window reminder appears, consider whether stale visible ids should be compacted before broad exploration.",
   "After a successful PCODX compaction, the proxy starts the next upstream app-server turn from a fresh thread seeded only with the compacted ledger render.",
 ].join("\n")
+const PCODX_TOOL_DESCRIPTION = renderSharedPrompt(loadSharedPrompt("partial-compact-tool-description.md"), {
+  INSTRUCTION_POINTER: loadSharedPrompt("partial-compact-instruction-pointer.md"),
+})
 
 const PCODX_DYNAMIC_TOOLS = [
   {
+    name: "partial_compact_instructions",
+    description: loadSharedPrompt("partial-compact-instruction-tool-description.md"),
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
     name: "partial_compact_current_session_message_ids",
-    description: "Return the currently visible PCODX ledger ids after front-end proxy compactions, including message ids and compacted-range ids.",
+    description: loadSharedPrompt("current-session-message-ids-tool-description.md"),
     inputSchema: {
       type: "object",
       properties: {},
@@ -108,19 +119,20 @@ const PCODX_DYNAMIC_TOOLS = [
   },
   {
     name: "partial_compact",
-    description: "Replace one or more disjoint ranges of visible PCODX ledger ids with faithful summaries for future Codex front-end turns. Range endpoints can be msg... message ids or cmp... compacted-range ids.",
+    description: PCODX_TOOL_DESCRIPTION,
     inputSchema: {
       type: "object",
       properties: {
         ranges: {
           type: "array",
+          description: loadSharedPrompt("partial-compact-arg-ranges.md"),
           minItems: 1,
           items: {
             type: "object",
             properties: {
-              from_message_id: { type: "string" },
-              to_message_id: { type: "string" },
-              summary: { type: "string" },
+              from_message_id: { type: "string", description: loadSharedPrompt("partial-compact-range-from-message-id.md") },
+              to_message_id: { type: "string", description: loadSharedPrompt("partial-compact-range-to-message-id.md") },
+              summary: { type: "string", description: loadSharedPrompt("partial-compact-range-summary.md") },
             },
             required: ["from_message_id", "to_message_id", "summary"],
             additionalProperties: false,
@@ -362,6 +374,7 @@ class FrontendProxyConnection {
 
   async #handleUpstreamRequest(msg: { id: RequestId; method: string; params: unknown }): Promise<void> {
     if (msg.method === "item/tool/call" && isPcodxToolCall(msg.params)) {
+      this.#sendPcodxToolStartedItem(msg.params)
       const result = await this.#handlePcodxToolCall(msg.params)
       this.#sendPcodxToolVisibleItem(msg.params, result)
       this.#sendUpstream({ id: msg.id, result })
@@ -484,7 +497,7 @@ class FrontendProxyConnection {
       recorded_ids.push(`${msg.role}=${msg.id}`)
     }
     thread.current_turn = null
-    const receipt = this.#saveTurnAndMaybeInjectReceipt(thread, turn.compacted, recorded_ids)
+    const receipt = this.#saveTurn()
     thread.pending_turn_receipt = receipt
     try {
       await receipt
@@ -493,26 +506,8 @@ class FrontendProxyConnection {
     }
   }
 
-  async #saveTurnAndMaybeInjectReceipt(thread: ThreadState, compacted: boolean, recorded_ids: string[]): Promise<void> {
+  async #saveTurn(): Promise<void> {
     await saveLedgerState(this.#ledger_state)
-    if (!compacted && recorded_ids.length > 0) await this.#injectTurnIdReceipt(thread, recorded_ids)
-  }
-
-  async #injectTurnIdReceipt(thread: ThreadState, recorded_ids: string[]): Promise<void> {
-    const text = [
-      "PCODX turn ledger ids:",
-      ...recorded_ids.map(id => `- ${id}`),
-      `Visible pcodx ids: ${compactableMessageIds(this.#ledger_state.ledger).join(", ") || "(none)"}`,
-      "Use these exact ids in `partial_compact` ranges when compacting this session.",
-    ].join("\n")
-    await this.#requestUpstream("thread/inject_items", {
-      threadId: thread.upstream_thread_id,
-      items: [{
-        type: "message",
-        role: "user",
-        content: [{ type: "input_text", text }],
-      }],
-    })
   }
 
   async #handlePcodxToolCall(params: Record<string, unknown>): Promise<PcodxToolResult> {
@@ -521,7 +516,9 @@ class FrontendProxyConnection {
     let text: string
     let success = true
     let compacted = false
-    if (tool === "partial_compact_current_session_message_ids") {
+    if (tool === "partial_compact_instructions") {
+      text = loadSharedPrompt("partial-compact-instruction.md")
+    } else if (tool === "partial_compact_current_session_message_ids") {
       const visible_ids = compactableMessageIds(this.#ledger_state.ledger)
       text = JSON.stringify({
         ok: true,
@@ -559,6 +556,14 @@ class FrontendProxyConnection {
   }
 
   #sendPcodxToolVisibleItem(params: Record<string, unknown>, result: PcodxToolResult): void {
+    this.#sendPcodxToolVisibleItemWithStatus(params, result, result.success ? "completed" : "failed", result.success)
+  }
+
+  #sendPcodxToolStartedItem(params: Record<string, unknown>): void {
+    this.#sendPcodxToolVisibleItemWithStatus(params, { contentItems: [], success: true, compacted: false }, "running", true)
+  }
+
+  #sendPcodxToolVisibleItemWithStatus(params: Record<string, unknown>, result: PcodxToolResult, status: string, success: boolean): void {
     const thread = this.#threadFromUpstreamParams(params)
     const thread_id = thread?.client_thread_id ?? (typeof params.threadId === "string" ? params.threadId : undefined)
     if (!thread_id) return
@@ -575,8 +580,8 @@ class FrontendProxyConnection {
           tool: params.tool,
           arguments: params.arguments,
           contentItems: result.contentItems,
-          status: result.success ? "completed" : "failed",
-          success: result.success,
+          status,
+          success,
           durationMs: 0,
         },
       },
@@ -749,7 +754,14 @@ function renderCompletedItemTranscript(params: unknown): string | null {
   const item = params.item
   const type = typeof item.type === "string" ? item.type : "unknown"
   if (type === "userMessage" || type === "agentMessage" || type === "plan" || type === "reasoning") return null
-  if (type === "dynamicToolCall" && (item.tool === "partial_compact" || item.tool === "partial_compact_current_session_message_ids")) return null
+  if (
+    type === "dynamicToolCall" &&
+    (
+      item.tool === "partial_compact" ||
+      item.tool === "partial_compact_current_session_message_ids" ||
+      item.tool === "partial_compact_instructions"
+    )
+  ) return null
   const rendered = renderNativeItem(item, type)
   return rendered ? `native Codex item completed: ${rendered}` : null
 }
@@ -852,7 +864,11 @@ function isNotification(msg: JsonRpcMessage): msg is { method: string; params: u
 }
 
 function isPcodxToolCall(params: unknown): params is Record<string, unknown> {
-  return isRecord(params) && (params.tool === "partial_compact" || params.tool === "partial_compact_current_session_message_ids")
+  return isRecord(params) && (
+    params.tool === "partial_compact" ||
+    params.tool === "partial_compact_current_session_message_ids" ||
+    params.tool === "partial_compact_instructions"
+  )
 }
 
 function parseThreadId(result: unknown, method: string): string {

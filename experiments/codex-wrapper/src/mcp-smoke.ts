@@ -84,7 +84,7 @@ try {
   })
   const before = parse_tool_json(before_ids)
   const before_visible_ids = before.visible_message_ids
-  if (!Array.isArray(before_visible_ids) || before_visible_ids.join(",") !== "msg000001,msg000002") {
+  if (!Array.isArray(before_visible_ids) || before_visible_ids.join(",") !== "msg1,msg2") {
     throw new Error(`unexpected pre-compaction visible ids: ${JSON.stringify(before_visible_ids)}`)
   }
   const before_text = tool_text(before_ids)
@@ -93,14 +93,14 @@ try {
     throw new Error("pre-compaction id result exposed raw recorded text")
   }
   const ledger = readFileSync(ledger_path, "utf-8")
-  if (ledger.includes("cmp000001")) throw new Error("ledger unexpectedly recorded compaction")
+  if (ledger.includes("cmp1")) throw new Error("ledger unexpectedly recorded compaction")
   const after_ids = await client.callTool({
     name: "partial_compact_current_ids",
     arguments: {},
   })
   const after = parse_tool_json(after_ids)
   const after_visible_ids = after.visible_message_ids
-  if (!Array.isArray(after_visible_ids) || after_visible_ids.join(",") !== "msg000001,msg000002") {
+  if (!Array.isArray(after_visible_ids) || after_visible_ids.join(",") !== "msg1,msg2") {
     throw new Error(`unexpected post-record visible ids: ${JSON.stringify(after_visible_ids)}`)
   }
   const after_text = tool_text(after_ids)
@@ -120,7 +120,7 @@ try {
 }
 
 function assert_receipt_hides_visible_context(text: string): void {
-  for (const hidden of ["rendered_visible_context", "<system>", "<message", "<compacted", "<pcodx-message", "<pcodx-compacted"]) {
+  for (const hidden of ["rendered_visible_context", "<system>", "<message", "<compacted", "<aboveturn", "<pcodx-message", "<pcodx-compacted"]) {
     if (text.includes(hidden)) throw new Error(`tool receipt exposed visible context marker ${hidden}`)
   }
 }

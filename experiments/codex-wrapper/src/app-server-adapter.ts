@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process"
 import readline from "node:readline"
+import { loadSharedPrompt, renderSharedPrompt } from "./shared-prompts.js"
 
 type RequestId = string | number
 
@@ -45,7 +46,6 @@ export type AppServerAdditionalContext = Record<string, { value: string; kind: "
 export const CONTEXT_WINDOW_REMINDER_CONTEXT_KEY = "pcodx.context_window_reminder"
 
 const CONTEXT_WINDOW_REMINDER_INTERVAL_TOKENS = 16_000
-const COMPACT_SOON_CONTEXT_FRACTION = 0.6
 const COMPACT_NOW_CONTEXT_FRACTION = 0.8
 
 export type CodexContextInjectionProbe = {
@@ -568,14 +568,9 @@ export function parseThreadTokenUsageUpdated(params: unknown): ThreadTokenUsageE
 export function renderContextWindowReminder(usage: CodexThreadTokenUsage): string {
   const last_input_tokens = usage.last.inputTokens
   const context_window = usableContextWindow(usage.modelContextWindow)
-  const window_text = context_window === null
-    ? `last completed model-call input was ${formatInt(last_input_tokens)} tokens; model context window was not reported`
-    : `last completed model-call input was ${formatInt(last_input_tokens)} of ${formatInt(context_window)} tokens (${formatPercent(last_input_tokens / context_window)})`
-  return [
-    `pcodx context-window reminder: ${window_text}.`,
-    `Completed-turn total so far is ${formatInt(usage.total.totalTokens)} tokens.`,
-    `Action: ${contextReminderAction(last_input_tokens, context_window)}.`,
-  ].join(" ")
+  return renderSharedPrompt(loadSharedPrompt("partial-compact-reminder.md"), {
+    CONTEXT_STATUS: contextStatusText(last_input_tokens, context_window),
+  }).replace(/\s*\n+\s*/g, " ").trim()
 }
 
 function parseThreadTokenUsage(raw: unknown): CodexThreadTokenUsage | null {
@@ -606,18 +601,9 @@ function parseTokenUsageBreakdown(raw: unknown): TokenUsageBreakdown | null {
   return { totalTokens, inputTokens, cachedInputTokens, outputTokens, reasoningOutputTokens }
 }
 
-function contextReminderAction(last_input_tokens: number, context_window: number | null): string {
-  if (context_window === null) {
-    return "watch growth; if context feels crowded, record durable state and consider partial_compact on stale visible ids"
-  }
-  const fraction = last_input_tokens / context_window
-  if (fraction >= COMPACT_NOW_CONTEXT_FRACTION) {
-    return "record durable state now, consider partial_compact on stale visible ids, or ask the manager to compact or resume with preserved context"
-  }
-  if (fraction >= COMPACT_SOON_CONTEXT_FRACTION) {
-    return "finish the current narrow step, then consider partial_compact on stale visible ids before broad exploration"
-  }
-  return "continue normal work and consider partial_compact at the existing pcodx trigger points"
+function contextStatusText(input_tokens: number, context_window: number | null): string {
+  if (context_window === null) return `current context window: ${tokenKText(input_tokens)} (unknown% full)`
+  return `current context window: ${tokenKText(input_tokens)} (${Math.min(999, Math.round(input_tokens / context_window * 100))}% full)`
 }
 
 function effectiveContextReminderInterval(configured_interval_tokens: number, context_window: number | null): number | null {
@@ -648,13 +634,10 @@ function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null
 }
 
-function formatInt(value: number): string {
-  return Math.round(value).toLocaleString("en-US")
-}
-
-function formatPercent(value: number): string {
-  const rounded = Math.round(value * 1000) / 10
-  return `${rounded.toFixed(1).replace(/\.0$/, "")}%`
+function tokenKText(tokens: number): string {
+  const thousands = tokens / 1000
+  if (thousands >= 10) return `${Math.round(thousands)}k`
+  return `${Math.round(thousands * 10) / 10}k`
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

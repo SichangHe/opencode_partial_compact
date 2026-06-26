@@ -4,11 +4,34 @@ set -euo pipefail
 self=$(readlink -f "${BASH_SOURCE[0]}")
 root=$(cd -- "$(dirname -- "$(dirname -- "$self")")" && pwd)
 
+pcodx_state_root() {
+  printf '%s/pcodx\n' "${XDG_STATE_HOME:-$HOME/.local/state}"
+}
+
+pcodx_cwd_prefix() {
+  local label hash
+  label=$(basename -- "$PWD" | sed 's/[^A-Za-z0-9_.-]/-/g')
+  [[ -n "$label" ]] || label=cwd
+  hash=$(printf '%s' "$PWD" | sha256sum | cut -c1-12)
+  printf '%s-%s\n' "$label" "$hash"
+}
+
+pcodx_new_run_dir() {
+  printf '%s/runs/%s/%s-%s-%s\n' "$(pcodx_state_root)" "$(date -u +%F)" "$(pcodx_cwd_prefix)" "$(date -u +%Y%m%dT%H%M%S)" "$$"
+}
+
+for arg in "$@"; do
+  [[ "$arg" == "--" ]] && break
+  if [[ "$arg" == "--help" || "$arg" == "-h" || "$arg" == "help" ]]; then
+    exec bun run "$root/src/frontend-cli.ts" --help
+  fi
+done
+
 if [[ "${1:-}" == "sidecar" || "${1:-}" == "debug-sidecar" || "${1:-}" == "server" ]]; then
   shift
   export PCODX_MODE=1
   export PCODX_POC_ROOT="${PCODX_POC_ROOT:-$root}"
-  export PCODX_RUN_DIR="${PCODX_RUN_DIR:-$PWD}"
+  export PCODX_RUN_DIR="${PCODX_RUN_DIR:-$(pcodx_new_run_dir)}"
   export PCODX_LEDGER_PATH="${PCODX_LEDGER_PATH:-$PCODX_RUN_DIR/pcodx-ledger.json}"
   export PCODX_SESSION_ID="${PCODX_SESSION_ID:-pcodx-sidecar}"
   mkdir -p "$PCODX_RUN_DIR"
@@ -87,4 +110,12 @@ if [[ "${1:-}" == "sidecar" || "${1:-}" == "debug-sidecar" || "${1:-}" == "serve
     "${forward_args[@]}"
 fi
 
-exec bun run "$root/src/agent-cli.ts" frontend --run-dir "$PWD" --cwd "$PWD" -- "$@"
+pcodx_frontend_args=(--cwd "$PWD")
+if [[ -n "${PCODX_RUN_DIR:-}" ]]; then
+  pcodx_frontend_args+=(--run-dir "$PCODX_RUN_DIR")
+fi
+if [[ -n "${PCODX_SESSION_ID:-}" ]]; then
+  pcodx_frontend_args+=(--session-id "$PCODX_SESSION_ID")
+fi
+
+exec bun run "$root/src/agent-cli.ts" frontend "${pcodx_frontend_args[@]}" -- "$@"

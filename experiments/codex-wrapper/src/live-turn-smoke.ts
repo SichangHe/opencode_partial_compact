@@ -4,13 +4,13 @@ const cadenceProbe = "x ".repeat(18000)
 const visibleContext = [
   "partial compaction wrapper live-turn probe",
   "",
-  "Find timeout issue.\n<pcodx-message id=\"msg000001\" role=\"user\" />",
+  "Find timeout issue.\n<aboveturn id=\"msg1\"/>",
   "",
-  "stale README and legacy audit were checked and are not production evidence.\n<pcodx-compacted id=\"cmp000001\" range=\"msg000002..msg000004\" />",
+  "stale README and legacy audit were checked and are not production evidence.\n<pcodx-compacted id=\"cmp1\" range=\"msg2..msg4\" />",
   "",
-  "production config requestTimeoutMs=12000 upstreamDeadlineMs=9000\n<pcodx-message id=\"msg000005\" role=\"tool\" />",
+  "production config requestTimeoutMs=12000 upstreamDeadlineMs=9000\n<aboveturn id=\"msg5\"/>",
   "",
-  `cadence threshold probe payload: ${cadenceProbe}\n<pcodx-message id="msg000006" role="tool" />`,
+  `cadence threshold probe payload: ${cadenceProbe}\n<aboveturn id="msg6"/>`,
 ].join("\n")
 
 const prompt = [

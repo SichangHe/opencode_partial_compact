@@ -33,8 +33,8 @@ describe("WrapperLedger", () => {
 
     expect(result.ok).toBe(true)
     const context = ledger.renderVisibleContext("system")
-    expect(context).toContain(`task\n<pcodx-message id="msg000001" role="user" />`)
-    expect(context).toContain(`old exploration summary\n<pcodx-compacted id="cmp000001" range="${first.id}..${second.id}" />`)
+    expect(context).toContain(`task\n<aboveturn id="msg1"/>`)
+    expect(context).toContain(`old exploration summary\n<pcodx-compacted id="cmp1" range="${first.id}..${second.id}" />`)
     expect(context).toContain("old exploration summary")
     expect(context).not.toContain("raw stale output")
   })
@@ -72,7 +72,7 @@ describe("WrapperLedger", () => {
     if (!result.ok) throw new Error("expected compaction success")
     expect(result.n_ranges_compacted).toBe(2)
     expect(result.n_messages_replaced).toBe(2)
-    expect(result.visible_message_ids).toEqual(["cmp000001", keep.id, "cmp000002"])
+    expect(result.visible_message_ids).toEqual(["cmp1", keep.id, "cmp2"])
     const context = ledger.renderVisibleContext("system")
     expect(context).toContain("first stale summary")
     expect(context).toContain("second stale summary")
@@ -92,19 +92,19 @@ describe("WrapperLedger", () => {
       summary: "first summary",
     })
     expect(first_result.ok).toBe(true)
-    expect(ledger.currentVisibleMessageIds()).toEqual(["cmp000001", third.id])
+    expect(ledger.currentVisibleMessageIds()).toEqual(["cmp1", third.id])
 
     const second_result = ledger.partialCompact({
-      from_message_id: "cmp000001",
+      from_message_id: "cmp1",
       to_message_id: third.id,
       summary: "merged summary",
     })
 
     expect(second_result.ok).toBe(true)
     if (!second_result.ok) throw new Error("expected compaction success")
-    expect(second_result.visible_message_ids).toEqual(["cmp000002"])
+    expect(second_result.visible_message_ids).toEqual(["cmp2"])
     const context = ledger.renderVisibleContext("system")
-    expect(context).toContain(`merged summary\n<pcodx-compacted id="cmp000002" range="${first.id}..${third.id}" />`)
+    expect(context).toContain(`merged summary\n<pcodx-compacted id="cmp2" range="${first.id}..${third.id}" />`)
     expect(context).toContain("merged summary")
     expect(context).not.toContain("first summary")
     expect(context).not.toContain("stale three")
@@ -136,8 +136,8 @@ describe("WrapperLedger", () => {
     })
 
     const loaded = WrapperLedger.fromSnapshot(ledger.snapshot())
-    expect(loaded.currentVisibleMessageIds()).toEqual(["cmp000001"])
-    expect(loaded.append("assistant", "next").id).toBe("msg000002")
+    expect(loaded.currentVisibleMessageIds()).toEqual(["cmp1"])
+    expect(loaded.append("assistant", "next").id).toBe("msg2")
 
     const invalid = ledger.snapshot() as {
       compactions: Array<{ from_message_id: string }>
@@ -210,7 +210,7 @@ describe("pcodx MCP sidecar", () => {
       expect(ids_text).not.toContain(raw_b)
 
       const current_ids = toolJson(await client.callTool({ name: "partial_compact_current_ids", arguments: {} }))
-      expect(current_ids.visible_message_ids).toEqual([first_id, "msg000002", second_id])
+      expect(current_ids.visible_message_ids).toEqual([first_id, "msg2", second_id])
       const visible_context = await readFile(requireString(current_ids.visible_context_path), "utf8")
       expect(visible_context).toContain("durable keep")
       expect(visible_context).toContain(raw_a)
@@ -247,7 +247,7 @@ describe("pcodx MCP sidecar", () => {
     try {
       await client.connect(transport)
       const current_ids = toolJson(await client.callTool({ name: "partial_compact_current_ids", arguments: {} }))
-      expect(current_ids.visible_message_ids).toEqual(["cmp000001"])
+      expect(current_ids.visible_message_ids).toEqual(["cmp1"])
     } finally {
       await client.close()
       await rm(run_dir, { recursive: true, force: true })
@@ -287,8 +287,8 @@ describe("SelfCompactingCodexController", () => {
     expect(history).toContain("controller summary survives")
     expect(history).not.toContain("PCODX_RAW_CONTROLLER_SENTINEL_A")
     expect(history).not.toContain("PCODX_RAW_CONTROLLER_SENTINEL_B")
-    expect(controller.currentVisibleMessageIds()).toEqual(["cmp000001"])
-    expect(controller.compactableMessageIds()).toEqual(["cmp000001"])
+    expect(controller.currentVisibleMessageIds()).toEqual(["cmp1"])
+    expect(controller.compactableMessageIds()).toEqual(["cmp1"])
   })
 })
 
@@ -335,13 +335,13 @@ describe("controller CLI", () => {
       const output = cliText(run_dir, [
         "/record tool PCODX_INTERACTIVE_RAW_SENTINEL",
         "/ids",
-        "/compact msg000001..msg000001 interactive raw sentinel summary",
+        "/compact msg1..msg1 interactive raw sentinel summary",
         "/show",
         "/exit",
         "",
       ].join("\n"))
       expect(output).toContain("pcodx interactive Codex CLI")
-      expect(output).toContain("recorded msg000001")
+      expect(output).toContain("recorded msg1")
       expect(output).toContain("compacted 1 range")
       expect(output).toContain("----- context -----")
       expect(output).toContain("interactive raw sentinel summary")
@@ -503,7 +503,7 @@ describe("agent wrapper", () => {
       expect(child_env.OPENAI_ACCESS_TOKEN).toBe("<unset>")
       expect(result.pcodx_session_id).toBe("frontend-session")
       const resume_command = requireString(result.pcodx_resume_command)
-      expect(resume_command).toContain("--session-id frontend-session")
+      expect(resume_command).toContain("PCODX_SESSION_ID=frontend-session")
       expect(resume_command).toContain("resume --last")
       expect(requireString(result.codex_frontend_command)).toContain("codex --remote")
       expect(requireString(result.codex_frontend_command)).toContain("--no-alt-screen")
@@ -512,6 +512,121 @@ describe("agent wrapper", () => {
     } finally {
       await rm(source_codex_home, { recursive: true, force: true })
       await rm(run_dir, { recursive: true, force: true })
+    }
+  })
+
+  it("prints pcodx help without launching the app-server", () => {
+    const result = spawnSync(join(ROOT, "bin", "pcodx"), ["--help"], {
+      encoding: "utf8",
+      timeout: 30000,
+    })
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain("pcodx Codex front-end proxy launcher")
+    expect(result.stdout).toContain("--run-dir")
+    expect(result.stderr).not.toContain("app-server")
+    const later_help = spawnSync(join(ROOT, "bin", "pcodx"), ["--no-alt-screen", "--help"], {
+      encoding: "utf8",
+      timeout: 30000,
+    })
+    expect(later_help.status).toBe(0)
+    expect(later_help.stdout).toContain("pcodx Codex front-end proxy launcher")
+    expect(later_help.stderr).not.toContain("app-server")
+  })
+
+  it("defaults front-end state storage outside the working directory", async () => {
+    const source_codex_home = await mkdtemp(join(tmpdir(), "pcodx-source-codex-home-test-"))
+    const xdg_state_home = await mkdtemp(join(tmpdir(), "pcodx xdg state test-"))
+    const cwd = await mkdtemp(join(tmpdir(), "pcodx cwd test-"))
+    try {
+      const result = agentJsonWithEnv(
+        { XDG_STATE_HOME: xdg_state_home },
+        "frontend",
+        "--dry-run",
+        "--source-codex-home",
+        source_codex_home,
+        "--cwd",
+        cwd,
+        "--",
+        "--no-alt-screen",
+      )
+      const run_dir = requireString(result.run_dir)
+      expect(run_dir).toContain(join(xdg_state_home, "pcodx", "runs"))
+      expect(run_dir).not.toBe(cwd)
+      expect(requireString(result.child_codex_home)).toBe(join(run_dir, "codex-home"))
+      const resume_command = requireString(result.pcodx_resume_command)
+      expect(resume_command).toContain(`cd '${cwd}' &&`)
+      expect(resume_command).toContain("PCODX_RUN_DIR='")
+      expect(resume_command.startsWith("'PCODX_RUN_DIR")).toBe(false)
+    } finally {
+      await rm(source_codex_home, { recursive: true, force: true })
+      await rm(xdg_state_home, { recursive: true, force: true })
+      await rm(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it("uses the latest cwd state for direct pcodx resume defaults", async () => {
+    const source_codex_home = await mkdtemp(join(tmpdir(), "pcodx-source-codex-home-test-"))
+    const xdg_state_home = await mkdtemp(join(tmpdir(), "pcodx-xdg-state-test-"))
+    const cwd = await mkdtemp(join(tmpdir(), "pcodx-cwd-test-"))
+    try {
+      const first = agentJsonWithEnv(
+        { XDG_STATE_HOME: xdg_state_home },
+        "frontend",
+        "--dry-run",
+        "--source-codex-home",
+        source_codex_home,
+        "--cwd",
+        cwd,
+        "--",
+        "--no-alt-screen",
+      )
+      const first_run_dir = requireString(first.run_dir)
+      await mkdir(first_run_dir, { recursive: true })
+      await writeFile(join(first_run_dir, "ledger.json"), "keep", "utf8")
+
+      const resumed = agentJsonWithEnv(
+        { XDG_STATE_HOME: xdg_state_home },
+        "frontend",
+        "--dry-run",
+        "--source-codex-home",
+        source_codex_home,
+        "--cwd",
+        cwd,
+        "--",
+        "resume",
+        "--last",
+      )
+      expect(requireString(resumed.run_dir)).toBe(first_run_dir)
+    } finally {
+      await rm(source_codex_home, { recursive: true, force: true })
+      await rm(xdg_state_home, { recursive: true, force: true })
+      await rm(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it("does not delete an explicit old run during dry-run", async () => {
+    const source_codex_home = await mkdtemp(join(tmpdir(), "pcodx-source-codex-home-test-"))
+    const xdg_state_home = await mkdtemp(join(tmpdir(), "pcodx-xdg-state-test-"))
+    const run_dir = join(xdg_state_home, "pcodx", "runs", "2000-01-01", "old-run")
+    try {
+      await mkdir(run_dir, { recursive: true })
+      await writeFile(join(run_dir, "ledger.json"), "keep", "utf8")
+      const result = agentJsonWithEnv(
+        { XDG_STATE_HOME: xdg_state_home },
+        "frontend",
+        "--dry-run",
+        "--run-dir",
+        run_dir,
+        "--source-codex-home",
+        source_codex_home,
+        "--",
+        "--no-alt-screen",
+      )
+      expect(requireString(result.run_dir)).toBe(run_dir)
+      expect(await readFile(join(run_dir, "ledger.json"), "utf8")).toBe("keep")
+    } finally {
+      await rm(source_codex_home, { recursive: true, force: true })
+      await rm(xdg_state_home, { recursive: true, force: true })
     }
   })
 
@@ -844,8 +959,7 @@ describe("context window reminders", () => {
     const additional_context = tracker.additionalContext("thread-1")
     const reminder = additional_context?.[CONTEXT_WINDOW_REMINDER_CONTEXT_KEY]
     expect(reminder?.kind).toBe("application")
-    expect(reminder?.value).toContain("81%")
-    expect(reminder?.value).toContain("record durable state now")
+    expect(reminder?.value).toContain("current context window: 81k (81% full)")
   })
 
   it("gates app-server reminders by token-growth cadence", () => {
@@ -855,7 +969,7 @@ describe("context window reminders", () => {
 
     observeTokenUsage(tracker, 16000)
     const first_reminder = tracker.additionalContext("thread-1")?.[CONTEXT_WINDOW_REMINDER_CONTEXT_KEY]
-    expect(first_reminder?.value).toContain("16%")
+    expect(first_reminder?.value).toContain("current context window: 16k (16% full)")
     expect(tracker.additionalContext("thread-1")).toBeUndefined()
 
     observeTokenUsage(tracker, 31999)
@@ -863,7 +977,7 @@ describe("context window reminders", () => {
 
     observeTokenUsage(tracker, 32000)
     const second_reminder = tracker.additionalContext("thread-1")?.[CONTEXT_WINDOW_REMINDER_CONTEXT_KEY]
-    expect(second_reminder?.value).toContain("32%")
+    expect(second_reminder?.value).toContain("current context window: 32k (32% full)")
   })
 
   it("resets app-server reminder cadence after context shrink", () => {
@@ -908,7 +1022,7 @@ describe("context window reminders", () => {
         reasoningOutputTokens: 0,
       },
       modelContextWindow: null,
-    })).toContain("model context window was not reported")
+    })).toContain("current context window: 0k (unknown% full)")
   })
 })
 
@@ -1092,6 +1206,7 @@ function expectReceiptHidesVisibleContext(text: string): void {
   expect(text).not.toContain("<system>")
   expect(text).not.toContain("<message")
   expect(text).not.toContain("<compacted")
+  expect(text).not.toContain("<aboveturn")
   expect(text).not.toContain("<pcodx-message")
   expect(text).not.toContain("<pcodx-compacted")
 }

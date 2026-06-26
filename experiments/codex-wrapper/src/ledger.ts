@@ -176,7 +176,7 @@ export class WrapperLedger {
       }
       return [
         entry.message.text,
-        `<pcodx-message id="${entry.message.id}" role="${entry.message.role}" />`,
+        `<aboveturn id="${entry.message.id}"/>`,
       ].join("\n")
     })
     return [system_instructions, ...rendered].join("\n\n")
@@ -208,11 +208,11 @@ export class WrapperLedger {
 }
 
 export function formatMessageId(n: number): string {
-  return `msg${n.toString(36).toUpperCase().padStart(6, "0")}`
+  return `msg${n.toString(36).toUpperCase()}`
 }
 
 function formatCompactionId(n: number): string {
-  return `cmp${n.toString(36).toUpperCase().padStart(6, "0")}`
+  return `cmp${n.toString(36).toUpperCase()}`
 }
 
 function parseLedgerMessage(raw: unknown): LedgerMessage {
@@ -283,9 +283,9 @@ function validateCompactionOverlaps(records: CompactionRecord[], messages: Ledge
 }
 
 function parsePrefixedId(id: string, prefix: "msg" | "cmp"): number {
-  if (!id.startsWith(prefix) || id.length !== 9) throw new Error(`invalid ${prefix} id ${id}`)
+  if (!id.startsWith(prefix)) throw new Error(`invalid ${prefix} id ${id}`)
   const suffix = id.slice(prefix.length)
-  if (!/^[0-9A-Z]{6}$/.test(suffix)) throw new Error(`invalid ${prefix} id ${id}`)
+  if (!/^[0-9A-Z]+$/.test(suffix)) throw new Error(`invalid ${prefix} id ${id}`)
   const n = Number.parseInt(suffix, 36)
   if (!Number.isSafeInteger(n) || n < 1) throw new Error(`invalid ${prefix} id ${id}`)
   return n

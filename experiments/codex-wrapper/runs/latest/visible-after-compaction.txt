@@ -1,16 +1,13 @@
-<system>You are Codex behind a partial-compaction wrapper.
+You are Codex behind a partial-compaction wrapper.
 Use message ids when requesting context compaction.
-Continue the task after compaction using visible summaries and recent raw context.</system>
+Continue the task after compaction using visible summaries and recent raw context.
 
-<message id="msg000001" role="user">
 Find the production payment API timeout problem and recommend the smallest safe fix.
-</message>
+<aboveturn id="msg1"/>
 
-<compacted id="cmp000001" range="msg000002..msg000004">
 stale discovery: checked README and legacy staging audit log; both mention old 30000ms staging behavior and are not production evidence. Kept production config outside this compacted range.
-</compacted>
+<pcodx-compacted id="cmp1" range="msg2..msg4" />
 
-<message id="msg000005" role="tool">
 read_file config/production.json
 
 {
@@ -19,20 +16,16 @@ read_file config/production.json
   "upstreamDeadlineMs": 9000
 }
 
-</message>
+<aboveturn id="msg5"/>
 
-<message id="msg000006" role="assistant">
 The README and legacy audit log are stale. I will compact that discovery context before continuing.
-</message>
+<aboveturn id="msg6"/>
 
-<message id="msg000007" role="tool">
-current visible ids: msg000001, msg000002, msg000003, msg000004, msg000005, msg000006
-</message>
+current visible ids: msg1, msg2, msg3, msg4, msg5, msg6
+<aboveturn id="msg7"/>
 
-<message id="msg000008" role="tool">
-partial_compact result: {"ok":true,"record":{"id":"cmp000001","from_message_id":"msg000002","to_message_id":"msg000004","summary":"stale discovery: checked README and legacy staging audit log; both mention old 30000ms staging behavior and are not production evidence. Kept production config outside this compacted range.","created_at_iso":"1970-01-01T00:00:00.000Z","n_messages_replaced":3},"visible_message_ids":["msg000001","cmp000001","msg000005","msg000006","msg000007"]}
-</message>
+partial_compact result: {"ok":true,"records":[{"id":"cmp1","from_message_id":"msg2","to_message_id":"msg4","summary":"stale discovery: checked README and legacy staging audit log; both mention old 30000ms staging behavior and are not production evidence. Kept production config outside this compacted range.","created_at_iso":"1970-01-01T00:00:00.000Z","n_messages_replaced":3}],"visible_message_ids":["msg1","cmp1","msg5","msg6","msg7"],"n_ranges_compacted":1,"n_messages_replaced":3}
+<aboveturn id="msg8"/>
 
-<message id="msg000009" role="system">
-codex app-server curated-context injection probe: ok; userAgent=opc_partial_compact_probe/0.139.0 (Ubuntu 22.4.0; x86_64) tmux/3.6a (opc_partial_compact_probe; 0.1.0); platform=unix/linux; itemsInjected=1
-</message>
+codex app-server curated-context injection probe: ok; userAgent=opc_partial_compact_probe/0.142.2 (Ubuntu 22.4.0; x86_64) tmux/3.6a (opc_partial_compact_probe; 0.1.0); platform=unix/linux; itemsInjected=1
+<aboveturn id="msg9"/>
