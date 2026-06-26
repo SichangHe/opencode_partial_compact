@@ -120,7 +120,7 @@ try {
 }
 
 function assert_receipt_hides_visible_context(text: string): void {
-  for (const hidden of ["rendered_visible_context", "<system>", "<message", "<compacted"]) {
+  for (const hidden of ["rendered_visible_context", "<system>", "<message", "<compacted", "<pcodx-message", "<pcodx-compacted"]) {
     if (text.includes(hidden)) throw new Error(`tool receipt exposed visible context marker ${hidden}`)
   }
 }

@@ -4,7 +4,8 @@ import { existsSync } from "node:fs"
 import { lstat, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises"
 import { createConnection, createServer } from "node:net"
 import { homedir } from "node:os"
-import { join, relative, resolve, sep } from "node:path"
+import { basename, dirname, join, relative, resolve, sep } from "node:path"
+import { fileURLToPath } from "node:url"
 import { startPcodxFrontendProxy, FRONTEND_ACCEPTANCE_SCOPE, FRONTEND_ACCEPTANCE_SCOPE_TEXT } from "./frontend-proxy.js"
 
 type ParsedArgs = {
@@ -22,9 +23,9 @@ type ChildCodexSetup = {
   env: NodeJS.ProcessEnv
 }
 
-const DEFAULT_RUN_DIR = "runs/frontend-proxy"
-const DEFAULT_SESSION_ID = "pcodx-frontend"
+const DEFAULT_RUN_DIR = "."
 const DEFAULT_PROXY_API_KEY = "cligate-local-proxy"
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const CHILD_AUTH_MARKER = "pcodx-frontend-proxy"
 const AUTH_ENV_KEYS = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_ACCESS_TOKEN"]
 const SAFE_TOP_LEVEL_CONFIG_KEYS = [
@@ -47,7 +48,7 @@ async function main(argv: string[]): Promise<void> {
     return
   }
   const run_dir = resolve(lastFlag(parsed, "run-dir") ?? DEFAULT_RUN_DIR)
-  const session_id = lastFlag(parsed, "session-id") ?? DEFAULT_SESSION_ID
+  const session_id = lastFlag(parsed, "session-id") ?? defaultSessionId(run_dir)
   const cwd = resolve(lastFlag(parsed, "cwd") ?? process.cwd())
   const proxy_port = await choosePort(parsed, "proxy-port")
   const upstream_port = await choosePort(parsed, "upstream-port")
@@ -57,6 +58,7 @@ async function main(argv: string[]): Promise<void> {
   const source_codex_home = resolve(lastFlag(parsed, "source-codex-home") ?? process.env.CODEX_HOME ?? join(homedir(), ".codex"))
   const dry_run = parsed.flags.has("dry-run")
   const selected_model = selectedModel(parsed)
+  const pcodx_resume_command = resumeCommand({ run_dir, cwd, session_id })
   const child_setup = await prepareChildCodexSetup({
     child_codex_home,
     source_codex_home,
@@ -85,6 +87,8 @@ async function main(argv: string[]): Promise<void> {
       upstream_url,
       proxy_url,
       codex_frontend_command: shellCommand(codex_cmd),
+      pcodx_session_id: session_id,
+      pcodx_resume_command,
       upstream_app_server_command: shellCommand(app_server_cmd),
       slash_command_surface: "native Codex front-end via `codex --remote`; `/review` reaches app-server `review/start`, native `/compact` reaches `thread/compact/start`",
       context_shrink_route: "PCODX proxy handles dynamic `partial_compact`, then starts the next upstream turn on a fresh app-server thread seeded from the compacted ledger render",
@@ -112,6 +116,7 @@ async function main(argv: string[]): Promise<void> {
     process.stdout.write(`pcodx_run_dir=${run_dir}\n`)
     process.stdout.write(`pcodx_child_codex_home=${child_setup.child_codex_home}\n`)
     process.stdout.write(`pcodx_model=${selected_model ?? "source-config-or-codex-default"}\n`)
+    process.stdout.write(`pcodx_resume_hint=${pcodx_resume_command}\n`)
     const codex = spawn(codex_cmd[0] ?? "", codex_cmd.slice(1), {
       stdio: "inherit",
       cwd,
@@ -119,6 +124,8 @@ async function main(argv: string[]): Promise<void> {
     })
     const status = await waitForExit(codex)
     proxy.stop()
+    process.stdout.write(`pcodx_session_id=${session_id}\n`)
+    process.stdout.write(`pcodx_resume_command=${pcodx_resume_command}\n`)
     process.exitCode = status
   } finally {
     app_server.kill("SIGTERM")
@@ -449,12 +456,12 @@ function printHelp(): void {
     "pcodx Codex front-end proxy launcher",
     "",
     "usage:",
-    "  bun run frontend -- [codex args...]",
-    "  bun run frontend -- --no-alt-screen",
+    "  bun run frontend -- [pcodx flags] -- [codex args...]",
+    "  bun run frontend -- --dry-run -- --model gpt-5.5",
     "",
     "pcodx flags:",
     `  --run-dir <path>       default ${DEFAULT_RUN_DIR}`,
-    `  --session-id <id>      default ${DEFAULT_SESSION_ID}`,
+    "  --session-id <id>      default derived from the run directory name",
     "  --cwd <path>           Codex working directory",
     "  --child-codex-home <path>  child Codex home for spawned native UI and app-server",
     "  --source-codex-home <path> source Codex home to copy non-secret routing defaults from",
@@ -464,6 +471,31 @@ function printHelp(): void {
     "  --dry-run              print commands without launching",
     "",
   ].join("\n"))
+}
+
+function defaultSessionId(run_dir: string): string {
+  const label = basename(run_dir).trim()
+  return label.length > 0 ? label : "pcodx"
+}
+
+function resumeCommand(input: { run_dir: string; cwd: string; session_id: string }): string {
+  if (input.session_id === defaultSessionId(input.run_dir)) {
+    return shellCommand(["pcodx", "resume", "--last"])
+  }
+  return shellCommand([
+    "bun",
+    "run",
+    join(ROOT, "src", "frontend-cli.ts"),
+    "--run-dir",
+    input.run_dir,
+    "--cwd",
+    input.cwd,
+    "--session-id",
+    input.session_id,
+    "--",
+    "resume",
+    "--last",
+  ])
 }
 
 main(process.argv.slice(2)).catch(err => {

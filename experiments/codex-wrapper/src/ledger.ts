@@ -170,18 +170,16 @@ export class WrapperLedger {
     const rendered = this.visibleEntries().map(entry => {
       if (entry.kind === "compaction") {
         return [
-          `<compacted id="${entry.record.id}" range="${entry.record.from_message_id}..${entry.record.to_message_id}">`,
           entry.record.summary,
-          "</compacted>",
+          `<pcodx-compacted id="${entry.record.id}" range="${entry.record.from_message_id}..${entry.record.to_message_id}" />`,
         ].join("\n")
       }
       return [
-        `<message id="${entry.message.id}" role="${entry.message.role}">`,
         entry.message.text,
-        "</message>",
+        `<pcodx-message id="${entry.message.id}" role="${entry.message.role}" />`,
       ].join("\n")
     })
-    return [`<system>${system_instructions}</system>`, ...rendered].join("\n\n")
+    return [system_instructions, ...rendered].join("\n\n")
   }
 
   snapshot(): unknown {

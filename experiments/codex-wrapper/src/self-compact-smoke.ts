@@ -121,7 +121,7 @@ function assertCompactedContext(context: string): void {
     if (context.includes(raw)) throw new Error(`compacted context still contains raw phrase ${raw}`)
   }
   if (!context.includes(SUMMARY_PHRASE)) throw new Error("compacted context missing summary phrase")
-  if (!context.includes("<compacted")) throw new Error("compacted context missing compaction marker")
+  if (!context.includes("<pcodx-compacted")) throw new Error("compacted context missing compaction marker")
 }
 
 function allRawSentinels(): string[] {

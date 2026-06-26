@@ -77,7 +77,7 @@ function staleDiscoveryRange(entries: VisibleEntry[]): { from_message_id: string
 }
 
 function assertCompactedContext(context: string): void {
-  if (!context.includes("<compacted")) {
+  if (!context.includes("<pcodx-compacted")) {
     throw new Error("expected compacted context before continuation")
   }
   if (context.includes("STALE_LEGACY_AUDIT_BLOCK")) {

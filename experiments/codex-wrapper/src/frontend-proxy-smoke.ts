@@ -185,6 +185,8 @@ try {
     msg.params.item.result === undefined)
   const resume_supported = upstream.resume_params.length === 1 && resumed_thread_id === "upstream-resume-1"
   const fork_supported = upstream.fork_params.length === 1 && forked_thread_id === "upstream-fork-1"
+  const resume_dynamic_tools_advertised = upstream.resume_params.some(hasPcodxDynamicTools)
+  const fork_dynamic_tools_advertised = upstream.fork_params.some(hasPcodxDynamicTools)
   const detached_review_supported = detached_review_thread_id === "upstream-review-1"
   const inline_review_after_compaction_supported = inline_review_after_compaction_thread_id === client_thread_id
   const parent_turn_after_inline_review_supported = upstream.turn_start_params.some(params =>
@@ -210,6 +212,8 @@ try {
     pcodx_tool_visible_in_client &&
     resume_supported &&
     fork_supported &&
+    resume_dynamic_tools_advertised &&
+    fork_dynamic_tools_advertised &&
     detached_review_supported &&
     inline_review_after_compaction_supported &&
     parent_turn_after_inline_review_supported &&
@@ -241,6 +245,8 @@ try {
     pcodx_tool_visible_in_client,
     resume_supported,
     fork_supported,
+    resume_dynamic_tools_advertised,
+    fork_dynamic_tools_advertised,
     detached_review_supported,
     inline_review_after_compaction_supported,
     parent_turn_after_inline_review_supported,

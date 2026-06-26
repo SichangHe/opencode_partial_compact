@@ -76,8 +76,12 @@
   - this wrapper does not implement stock Codex CLI transcript rewriting
 - Codex front-end proxy
   - `bun run agent -- frontend --model gpt-5.5 -- --no-alt-screen`
-  - lowercase system-tool command after linking: `pcodx native --model gpt-5.5 -- --no-alt-screen`
-  - compatibility command after linking: `pcodx-native --model gpt-5.5 -- --no-alt-screen`
+  - lowercase system-tool command after linking: `pcodx`
+  - normal Codex arguments are passed directly, for example `pcodx --model gpt-5.5`
+  - resume uses the native Codex command surface through the proxy, for example `pcodx resume --last` or `pcodx resume <codex-session-id>`
+  - the run directory defaults to the current working directory; the PCODX ledger session label defaults to that directory name
+  - on exit the launcher prints `pcodx_session_id=<label>` and `pcodx_resume_command=pcodx resume --last`
+  - debug sidecar/server mode is explicit: `pcodx server` or `pcodx sidecar`
   - launches real Codex front-end with `codex --remote`
   - starts a real upstream `codex app-server`
   - both spawned Codex processes use a child `CODEX_HOME` under the run directory
@@ -95,9 +99,10 @@
   - visible PCODX ids may be `msg...` message ids or `cmp...` compacted-range ids; either kind can be used as a `partial_compact` range endpoint
   - internal PCODX dynamic tool calls are mirrored back to the native front-end as completed dynamic-tool items so the UI has a visible compaction event
   - app-server `thread/tokenUsage/updated` notifications feed the same roughly 16k-token reminder tracker used by the controller; due reminders are passed as next-turn `additionalContext`
+  - example reminder text: `pcodx context-window reminder: latest turn used 16000 input tokens, 16% of the 100000-token model context window. action: continue normal work and consider partial_compact at the existing pcodx trigger points.`
   - after `partial_compact` succeeds, the proxy starts the next upstream turn on a fresh app-server thread
   - the fresh upstream thread is seeded with only the compacted `WrapperLedger` render
-  - `thread/resume` and `thread/fork` are registered and can continue through the proxy
+  - `thread/resume` and `thread/fork` are registered, receive the same PCODX dynamic tools, and can continue through the proxy
   - detached `review/start` review threads are registered and can continue through the proxy
   - review starts refresh and inject compacted context when a prior PCODX compaction invalidated the mapped thread
   - successful PCODX compaction invalidates every mapped thread's injected context because the ledger is global
@@ -106,7 +111,6 @@
   - fake upstream smoke verifies native method forwarding, dynamic tool advertisement, detached review/resume/fork mapping, native completed-item retention, all-thread invalidation, and future-context shrink without model calls
   - this path preserves Codex front-end CLI/TUI behavior better than the custom `pcodx>` controller REPL
   - it still does not mutate a stock Codex CLI thread's hidden transcript in place
-  - exact remaining blocker: Codex app-server `thread/resume` and `thread/fork` params have no `dynamicTools` field, so PCODX dynamic compaction tools can be injected on proxy-started fresh threads but not retroactively added to already-resumed native threads without a Codex API extension
 - controller CLI
   - `bun run controller -- --run-dir runs/my-session --session-id my-session interactive`
   - starts a human-facing REPL backed by the self-compacting app-server controller
@@ -131,12 +135,12 @@
   - use this wrapper workflow when the requirement is to change future model-visible context
   - do not use the MCP-only sidecar workflow as evidence of stock CLI transcript shrink
 - pcodx MCP worker path
-  - `pcodx` launches normal Codex with the `pcodx_partial_compact` MCP server
-  - `pcodx native` launches the native Codex front-end proxy path
+  - `pcodx server` and `pcodx sidecar` launch normal Codex with the `pcodx_partial_compact` MCP server for debugging the sidecar-only path
+  - plain `pcodx` launches the native Codex front-end proxy path
   - tools exposed by that server are `partial_compact_instructions`, `partial_compact_record_message`, `partial_compact_current_ids`, and `partial_compact_current_session_message_ids`
   - worker startup instructions use `partial_compact_current_ids` because the fully namespaced Codex function name stays within the 64-character tool-name limit
   - `partial_compact_current_session_message_ids` remains a raw MCP compatibility alias for existing callers
-  - the MCP server writes a sidecar ledger at `PCODX_LEDGER_PATH`, defaulting under `/tmp/pcodx-runs`
+  - the MCP server writes a sidecar ledger at `PCODX_LEDGER_PATH`, defaulting to `pcodx-ledger.json` in the current working directory
   - `src/pcodx-instructions.ts` is the shared startup/tool instruction source for workers
   - `partial_compact_instructions` returns the same text that `pcodx` injects at session start
   - workers are told to treat sidecar recording as expected context hygiene and record compactable working memory early
@@ -160,15 +164,19 @@
   - minimal working self-compaction uses a PCODX-owned ledger plus fresh app-server threads, because fresh threads can be seeded with only the compacted render
   - the controller path owns both UI and turns; the front-end proxy path lets native Codex own UI while PCODX owns upstream turn replacement
   - current stock CLI/MCP workers do not expose their live thread id, transcript mutation API, or app-server connection to the MCP server
-  - remaining boundary for resumed workers: manager/controller resume must start future work from `renderVisibleContext`; MCP-side ledger compaction alone is only durable state preservation
+  - `pcodx resume ...` delegates to native Codex `resume ...` through the same proxy and reuses the current working directory as the PCODX run directory
+  - PCODX ledger synchronization is durable when launch and resume happen from the same working directory, because the ledger files live there
+  - exact remaining resume blocker: this repo cannot reconstruct a missing PCODX ledger from an arbitrary native Codex session UUID because Codex does not expose that transcript and session mapping to the wrapper as a supported API
   - app-server reminder injection is based on completed-turn usage and a roughly 16k-token cadence, so it is a next-turn reminder rather than a live mid-turn hidden-context gauge
   - `codex debug prompt-input` renders the model-visible prompt item list, but does not report token usage
   - the PCODX MCP server cannot read live hidden native usage because Codex does not pass the real session id, session JSONL path, token counter, or pending hidden transcript state into MCP server calls
 - XML-like ledger rendering boundary
-  - `WrapperLedger.renderVisibleContext` renders recorded PCODX state as one injected user context item with `<system>`, `<message id="..." role="...">`, and `<compacted id="..." range="...">` tags
-  - those tags are not a partially generated assistant prefix; they are constructed before the next app-server turn when PCODX injects ledger context with `thread/inject_items`
-  - assistant and tool outputs are captured as ordinary completed turn data first, then wrapped only when rendering future ledger context
-  - this can change future prompt-cache reuse because the injected context changes, but it does not ask the model to continue inside an already-open XML tag and then patch in a closing tag after generation
+  - `WrapperLedger.renderVisibleContext` renders recorded PCODX state as one injected user context item
+  - preserved message text is left first and receives an appended self-closing marker such as `<pcodx-message id="msg000001" role="assistant" />`
+  - compacted summaries replace stale ranges and receive only an appended marker such as `<pcodx-compacted id="cmp000001" range="msg000002..msg000004" />`
+  - system instructions are not wrapped in a synthetic `<system>` tag
+  - assistant and tool outputs are captured as ordinary completed turn data first, then annotated only when rendering future ledger context
+  - this still changes future prompt-cache reuse after compaction because the injected context changes, but it avoids prepending a synthetic tag before preserved generated output
   - smallest plausible in-place live-compaction integration point for normal CLI/MCP workers remains a Codex-native API that replaces model-visible history for the current running thread
 - evidence
   - `visible-before-compaction.txt` contains stale raw context

@@ -2,7 +2,7 @@ import { pcodx_startup_instructions } from "./pcodx-instructions.js"
 
 const ledger_path = "/tmp/pcodx-startup-smoke-ledger.json"
 const proc = Bun.spawnSync({
-  cmd: ["pcodx", "debug", "prompt-input", "startup smoke"],
+  cmd: ["pcodx", "sidecar", "debug", "prompt-input", "startup smoke"],
   env: {
     ...process.env,
     PCODX_LEDGER_PATH: ledger_path,
@@ -42,12 +42,12 @@ if (developer_text.includes("then call partial_compact")) {
 }
 const expected_text = pcodx_startup_instructions(ledger_path)
 if (!developer_text.includes(expected_text)) throw new Error("developer prompt does not contain the shared startup instruction")
-assert_allows_config(["pcodx", "debug", "prompt-input", "--config", 'model_reasoning_effort="xhigh"', "startup smoke"])
-assert_allows_config(["pcodx", "debug", "prompt-input", "--config", "model_reasoning_effort='xhigh'", "startup smoke"])
-assert_rejects_config(["pcodx", "debug", "prompt-input", "-c", 'developer_instructions="caller override"', "startup smoke"])
-assert_rejects_config(["pcodx", "debug", "prompt-input", "--config", 'developer_instructions = "caller override"', "startup smoke"])
-assert_rejects_config(["pcodx", "debug", "prompt-input", "--config", 'model="gpt-5"', "startup smoke"])
-assert_rejects_config(["pcodx", "debug", "prompt-input", "--config", 'model_reasoning_effort="xhigh"\ndeveloper_instructions="caller override"', "startup smoke"])
+assert_allows_config(["pcodx", "sidecar", "debug", "prompt-input", "--config", 'model_reasoning_effort="xhigh"', "startup smoke"])
+assert_allows_config(["pcodx", "sidecar", "debug", "prompt-input", "--config", "model_reasoning_effort='xhigh'", "startup smoke"])
+assert_rejects_config(["pcodx", "sidecar", "debug", "prompt-input", "-c", 'developer_instructions="caller override"', "startup smoke"])
+assert_rejects_config(["pcodx", "sidecar", "debug", "prompt-input", "--config", 'developer_instructions = "caller override"', "startup smoke"])
+assert_rejects_config(["pcodx", "sidecar", "debug", "prompt-input", "--config", 'model="gpt-5"', "startup smoke"])
+assert_rejects_config(["pcodx", "sidecar", "debug", "prompt-input", "--config", 'model_reasoning_effort="xhigh"\ndeveloper_instructions="caller override"', "startup smoke"])
 console.log(JSON.stringify({ ok: true, ledger_path }, null, 2))
 
 function developer_prompt_text(prompt_items: PromptItem[]): string {

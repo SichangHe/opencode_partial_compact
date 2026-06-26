@@ -243,7 +243,7 @@ class FrontendProxyConnection {
       return { params: this.#prepareThreadStartParams(params) }
     }
     if (method === "thread/resume" || method === "thread/fork") {
-      const prepared = withPcodxDeveloperInstructions(params, this.#cwd)
+      const prepared = withPcodxThreadStartParams(params, this.#cwd)
       const thread = this.#threadFromParams(prepared)
       return { params: thread ? rewriteThreadIds(prepared, thread.client_thread_id, thread.upstream_thread_id) : prepared }
     }

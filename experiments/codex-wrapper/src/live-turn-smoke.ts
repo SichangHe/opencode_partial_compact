@@ -2,15 +2,15 @@ import { runCuratedLiveTurnSmoke } from "./app-server-adapter.js"
 
 const cadenceProbe = "x ".repeat(18000)
 const visibleContext = [
-  "<system>partial compaction wrapper live-turn probe</system>",
+  "partial compaction wrapper live-turn probe",
   "",
-  "<message id=\"msg000001\" role=\"user\">Find timeout issue.</message>",
+  "Find timeout issue.\n<pcodx-message id=\"msg000001\" role=\"user\" />",
   "",
-  "<compacted id=\"cmp000001\" range=\"msg000002..msg000004\">stale README and legacy audit were checked and are not production evidence.</compacted>",
+  "stale README and legacy audit were checked and are not production evidence.\n<pcodx-compacted id=\"cmp000001\" range=\"msg000002..msg000004\" />",
   "",
-  "<message id=\"msg000005\" role=\"tool\">production config requestTimeoutMs=12000 upstreamDeadlineMs=9000</message>",
+  "production config requestTimeoutMs=12000 upstreamDeadlineMs=9000\n<pcodx-message id=\"msg000005\" role=\"tool\" />",
   "",
-  `<message id="msg000006" role="tool">cadence threshold probe payload: ${cadenceProbe}</message>`,
+  `cadence threshold probe payload: ${cadenceProbe}\n<pcodx-message id="msg000006" role="tool" />`,
 ].join("\n")
 
 const prompt = [

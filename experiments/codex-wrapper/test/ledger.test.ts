@@ -33,8 +33,8 @@ describe("WrapperLedger", () => {
 
     expect(result.ok).toBe(true)
     const context = ledger.renderVisibleContext("system")
-    expect(context).toContain(`<message id="msg000001" role="user">`)
-    expect(context).toContain(`<compacted id="cmp000001" range="${first.id}..${second.id}">`)
+    expect(context).toContain(`task\n<pcodx-message id="msg000001" role="user" />`)
+    expect(context).toContain(`old exploration summary\n<pcodx-compacted id="cmp000001" range="${first.id}..${second.id}" />`)
     expect(context).toContain("old exploration summary")
     expect(context).not.toContain("raw stale output")
   })
@@ -104,7 +104,7 @@ describe("WrapperLedger", () => {
     if (!second_result.ok) throw new Error("expected compaction success")
     expect(second_result.visible_message_ids).toEqual(["cmp000002"])
     const context = ledger.renderVisibleContext("system")
-    expect(context).toContain(`<compacted id="cmp000002" range="${first.id}..${third.id}">`)
+    expect(context).toContain(`merged summary\n<pcodx-compacted id="cmp000002" range="${first.id}..${third.id}" />`)
     expect(context).toContain("merged summary")
     expect(context).not.toContain("first summary")
     expect(context).not.toContain("stale three")
@@ -178,7 +178,8 @@ describe("pcodx MCP sidecar", () => {
       const empty_ids = toolJson(await client.callTool({ name: "partial_compact_current_session_message_ids", arguments: {} }))
       const empty_visible_context_path = requireString(empty_ids.visible_context_path)
       const empty_visible_context = await readFile(empty_visible_context_path, "utf8")
-      expect(empty_visible_context).toContain("<system>pcodx recorded visible context</system>")
+      expect(empty_visible_context).toContain("pcodx recorded visible context")
+      expect(empty_visible_context).not.toContain("<system>")
 
       const first_raw = await client.callTool({
         name: "partial_compact_record_message",
@@ -262,12 +263,12 @@ describe("demo", () => {
     const finalReport = await readFile(join(ROOT, "runs", "latest", "final-report.md"), "utf8")
 
     expect(before).toContain("STALE_LEGACY_AUDIT_BLOCK")
-    expect(after).toContain("<compacted")
+    expect(after).toContain("<pcodx-compacted")
     expect(after).toContain("codex app-server curated-context injection probe: ok")
     expect(after).not.toContain("STALE_LEGACY_AUDIT_BLOCK")
     expect(finalReport).toContain("production config sets `requestTimeoutMs` to 12000")
     expect(finalReport).toContain("Recommended fix")
-  })
+  }, 15_000)
 })
 
 describe("SelfCompactingCodexController", () => {
@@ -500,6 +501,10 @@ describe("agent wrapper", () => {
       expect(child_env.CODEX_API_KEY).toBe("<unset>")
       expect(child_env.CODEX_ACCESS_TOKEN).toBe("<unset>")
       expect(child_env.OPENAI_ACCESS_TOKEN).toBe("<unset>")
+      expect(result.pcodx_session_id).toBe("frontend-session")
+      const resume_command = requireString(result.pcodx_resume_command)
+      expect(resume_command).toContain("--session-id frontend-session")
+      expect(resume_command).toContain("resume --last")
       expect(requireString(result.codex_frontend_command)).toContain("codex --remote")
       expect(requireString(result.codex_frontend_command)).toContain("--no-alt-screen")
       expect(requireString(result.slash_command_surface)).toContain("/review")
@@ -1087,6 +1092,8 @@ function expectReceiptHidesVisibleContext(text: string): void {
   expect(text).not.toContain("<system>")
   expect(text).not.toContain("<message")
   expect(text).not.toContain("<compacted")
+  expect(text).not.toContain("<pcodx-message")
+  expect(text).not.toContain("<pcodx-compacted")
 }
 
 function observeTokenUsage(

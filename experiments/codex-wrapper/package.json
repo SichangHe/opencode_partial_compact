@@ -5,8 +5,7 @@
   "description": "Proof-of-concept Codex app-server wrapper for message-ID partial compaction.",
   "main": "./dist/index.js",
   "bin": {
-    "pcodx": "./bin/pcodx",
-    "pcodx-native": "./bin/pcodx-native"
+    "pcodx": "./bin/pcodx"
   },
   "scripts": {
     "build": "tsc",
